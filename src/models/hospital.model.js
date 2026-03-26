@@ -1,4 +1,5 @@
 import mongoose, { Schema } from "mongoose";
+import mongooseAggregatePaginate from "mongoose-aggregate-paginate-v2";
 
 const hospitalSchema = new Schema(
     {
@@ -38,12 +39,14 @@ const hospitalSchema = new Schema(
             type: [Schema.Types.ObjectId],
             ref: "Appointment"
         },
-        is_recommended: {
-            type: Boolean,
-            default: false
-        }
+        rating: {
+            type: Number,
+            required: true
+        },
     },
     { timestamps: true }
 );
+
+hospitalSchema.plugin(mongooseAggregatePaginate);
 
 export const Hospital = mongoose.model("Hospital", hospitalSchema);
