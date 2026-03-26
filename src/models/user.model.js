@@ -20,6 +20,14 @@ const userSchema = new Schema(
             type: String,
             required: true
         },
+        first_name: {
+            type: String,
+            required: true
+        },
+        last_name: {
+            type: String,
+            required: true
+        },
         age: {
             type: Number,
             required: true
@@ -37,6 +45,10 @@ const userSchema = new Schema(
             enum: ["male", "female", "other"],
             required: true
         },
+        blood_group: {
+            type: String,
+            required: true
+        }, 
         contact_number: {
             type: Number,
             required: true
@@ -44,6 +56,18 @@ const userSchema = new Schema(
         profile_image: {
             type: String
         },
+        appointments: {
+            type: [Schema.Types.ObjectId],
+            ref: "Appointment"
+        },
+        members: {
+            type: [Schema.Types.ObjectId],
+            ref: "Member"
+        },
+        previously_visited: {
+            type: [Schema.Types.ObjectId],
+            ref:"Hospital"
+        }
     },
     { timestamps: true }
 );
