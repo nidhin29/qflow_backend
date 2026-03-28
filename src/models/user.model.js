@@ -6,7 +6,6 @@ const userSchema = new Schema(
     {
         username: {
             type: String,
-            required: true,
             unique: true,
             lowercase: true,
             trim: true
@@ -23,37 +22,29 @@ const userSchema = new Schema(
             required: true
         },
         first_name: {
-            type: String,
-            required: true
+            type: String
         },
         last_name: {
-            type: String,
-            required: true
+            type: String
         },
         age: {
-            type: Number,
-            required: true
+            type: Number
         },
         weight: {
-            type: Number,
-            required: true
+            type: Number
         },
         height: {
-            type: Number,
-            required: true
+            type: Number
         },
         gender: {
             type: String,
-            enum: ["male", "female", "other"],
-            required: true
+            enum: ["male", "female", "other"]
         },
         blood_group: {
-            type: String,
-            required: true
-        }, 
+            type: String
+        },
         contact_number: {
-            type: Number,
-            required: true
+            type: Number
         },
         profile_image: {
             type: String
@@ -68,32 +59,29 @@ const userSchema = new Schema(
         },
         previously_visited: {
             type: [Schema.Types.ObjectId],
-            ref:"Hospital"
+            ref: "Hospital"
+        },
+        refresh_token: {
+            type: String
         }
     },
     { timestamps: true }
 );
 
-userSchema.pre('save', async function(next) {
-
-    if(!this.isModified("password")) return next();
-
-    this.password = await bcrypt.hash(this.password,10);
-    return next();
+userSchema.pre('save', async function () {
+    if (!this.isModified("password")) return;
+    this.password = await bcrypt.hash(this.password, 10);
 })
 
-userSchema.methods.isPasswordCorrect = async function(password){
-    return await bcrypt.compare(password,this.password);
+userSchema.methods.isPasswordCorrect = async function (password) {
+    return await bcrypt.compare(password, this.password);
 }
 
-userSchema.methods.generateAccessToken = function(){
+userSchema.methods.generateAccessToken = function () {
     return jwt.sign(
         {
             _id: this._id,
-            email: this.email,
-            username: this.username,
-            first_name: this.first_name,
-            last_name: this.last_name
+            email: this.email
         },
         process.env.ACCESS_TOKEN_SECRET,
         {
@@ -102,7 +90,7 @@ userSchema.methods.generateAccessToken = function(){
     )
 }
 
-userSchema.methods.generateRefreshToken = function(){
+userSchema.methods.generateRefreshToken = function () {
     return jwt.sign(
         {
             _id: this._id,
