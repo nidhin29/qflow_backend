@@ -263,3 +263,43 @@ const googleLogin = asyncHandler(async (req, res) => {
 
 
 export { googleLogin }
+
+
+const loginUser = asyncHandler(async (req, res) => {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+        throw new ApiError(400, "Email and Password are required");
+    }
+
+    const user = await User.findOne({ email });
+
+    if (!user) {
+        throw new ApiError(404, "User not found");
+    }
+
+    const isPasswordCorrect = await user.isPasswordCorrect(password);
+
+    if (!isPasswordCorrect) {
+        throw new ApiError(401, "Invalid password");
+    }
+
+    const { accessToken, refreshToken } = await generateAccessAndRefereshTokens(user._id)
+
+    return res.status(200)
+        .cookie("accessToken", accessToken, options)
+        .cookie("refreshToken", refreshToken, options)
+        .json(
+            new ApiResponse(200, "User logged in successfully", {
+                user: {
+                    _id: user._id,
+                    email: user.email,
+                    username: user.username
+                },
+                accessToken,
+                refreshToken
+            })
+        )
+})
+
+export { loginUser }
