@@ -2,6 +2,30 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 import { User } from "../models/user.model.js";
 import { ApiError } from "../utils/ApiError.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
+import { OAuth2Client } from "google-auth-library";
+import { sendEmail } from "../utils/sendEmail.js";
+
+const generateAccessAndRefereshTokens = async (userId) => {
+    try {
+        const user = await User.findById(userId)
+        const accessToken = user.generateAccessToken()
+        const refreshToken = user.generateRefreshToken()
+
+        user.refresh_token = refreshToken
+        await user.save({ validateBeforeSave: false })
+
+        return { accessToken, refreshToken }
+
+
+    } catch (error) {
+        throw new ApiError(500, "Something went wrong while generating referesh and access token")
+    }
+}
+
+const options = {
+    httpOnly: true,
+    secure: true
+}
 
 
 const registerUser = asyncHandler(async (req, res) => {
@@ -17,22 +41,225 @@ const registerUser = asyncHandler(async (req, res) => {
     if (existingUser) {
         throw new ApiError(400, "User already exists with this email");
     }
-   
+
+    const generatedUsername = email.split("@")[0] + Math.floor(Math.random() * 1000);
+
     const user = await User.create({
         email,
-        password
+        password,
+        username: generatedUsername,
     })
 
-    const createdUser = await User.findById(user._id).select("email");
+    const createdUser = await User.findById(user._id).select("email _id")
 
     if (!createdUser) {
-        throw new ApiError(500, "Something went wrong");
+        throw new ApiError(500, "Something went wrong while registering the user");
     }
 
-    return res.status(201).json(
-        new ApiResponse(200, "User registered successfully", createdUser)
-    )
+    return res.status(201)
+        .json(
+            new ApiResponse(201, "User registered. Please proceed with OTP verification", createdUser)
+        )
 
 })
 
 export { registerUser }
+
+
+const sendOtp = asyncHandler(async (req, res) => {
+    const { email } = req.body;
+
+    if (!email) {
+        throw new ApiError(400, "Email is required");
+    }
+
+    const user = await User.findOne({ email });
+
+    if (!user) {
+        throw new ApiError(404, "User not found");
+    }
+
+    // Generate 6-digit OTP and set expiry (15 minutes)
+    const otp = Math.floor(100000 + Math.random() * 900000);
+    const otpExpiry = new Date(Date.now() + 15 * 60 * 1000);
+
+    // Save OTP and Expiry to the user in the database
+    user.emailVerificationOTP = otp;
+    user.emailVerificationOTPExpiry = otpExpiry;
+    await user.save({ validateBeforeSave: false });
+
+    // Send the email
+    try {
+        await sendEmail({
+            email: user.email,
+            subject: "Your Qflow Verification OTP",
+            message: `Your verification code is ${otp}. It will expire in 15 minutes.`
+        });
+    } catch (error) {
+        throw new ApiError(500, "Something went wrong while sending the email. Please try again.");
+    }
+
+    return res.status(200).json(
+        new ApiResponse(200, "OTP sent successfully to your email")
+    );
+});
+
+export { sendOtp }
+
+
+const verifyOtp = asyncHandler(async (req, res) => {
+    const { email, otp } = req.body;
+
+    if (!email || !otp) {
+        throw new ApiError(400, "Email and OTP are required");
+    }
+
+    const user = await User.findOne({ email });
+
+    if (!user) {
+        throw new ApiError(404, "User not found");
+    }
+
+    // Check if OTP matches
+    if (user.emailVerificationOTP !== Number(otp)) {
+        throw new ApiError(400, "Invalid OTP");
+    }
+
+    // Check if OTP is expired
+    if (user.emailVerificationOTPExpiry < Date.now()) {
+        throw new ApiError(400, "OTP has expired. Please request a new one.");
+    }
+
+    // Verify user and clear OTP fields
+    user.isEmailVerified = true;
+    user.emailVerificationOTP = undefined;
+    user.emailVerificationOTPExpiry = undefined;
+
+    await user.save({ validateBeforeSave: false });
+
+    // Generate tokens so user is logged in immediately after verification
+    const { accessToken, refreshToken } = await generateAccessAndRefereshTokens(user._id);
+
+    return res.status(200)
+        .cookie("accessToken", accessToken, options)
+        .cookie("refreshToken", refreshToken, options)
+        .json(
+            new ApiResponse(200, "Email verified successfully!", {
+                user: {
+                    _id: user._id,
+                    email: user.email,
+                    username: user.username,
+                    isEmailVerified: user.isEmailVerified
+                },
+                accessToken,
+                refreshToken
+            })
+        );
+});
+
+export { verifyOtp }
+
+
+const googleLogin = asyncHandler(async (req, res) => {
+    const client = new OAuth2Client(
+        process.env.GOOGLE_CLIENT_ID_WEB
+    );
+
+    const { tokenID } = req.body;
+
+    const ticket = await client.verifyIdToken({
+        idToken: tokenID,
+        audience: [
+            process.env.GOOGLE_CLIENT_ID_WEB,
+            process.env.GOOGLE_CLIENT_ID_APP,
+        ]
+    });
+
+    const payload = ticket.getPayload();
+
+    const { email } = payload;
+
+    const existingUser = await User.findOne({ email });
+
+    if (existingUser && (!existingUser.first_name ||
+        !existingUser.last_name || !existingUser.age ||
+        !existingUser.weight || !existingUser.height ||
+        !existingUser.gender || !existingUser.blood_group
+        || !existingUser.contact_number ||
+        !existingUser.profile_image)) {
+
+        const userData = {
+            _id: existingUser._id,
+            email: existingUser.email,
+            username: existingUser.username
+        };
+
+        const { accessToken, refreshToken } = await generateAccessAndRefereshTokens(existingUser._id)
+
+        return res.status(201)
+            .cookie("accessToken", accessToken, options)
+            .cookie("refreshToken", refreshToken, options)
+            .json(
+                new ApiResponse(201, "User already exists and needs to complete profile", {
+                    user: userData,
+                    accessToken,
+                    refreshToken
+                })
+            )
+    }
+    else if (existingUser) {
+        const userData = {
+            _id: existingUser._id,
+            email: existingUser.email,
+            username: existingUser.username
+        };
+
+        const { accessToken, refreshToken } = await generateAccessAndRefereshTokens(existingUser._id)
+
+
+        return res.status(200)
+            .cookie("accessToken", accessToken, options)
+            .cookie("refreshToken", refreshToken, options)
+            .json(
+                new ApiResponse(200, "User already exists", {
+                    user: userData,
+                    accessToken,
+                    refreshToken
+                })
+            )
+    }
+    else {
+
+        const generatedUsername = email.split("@")[0] + Math.floor(Math.random() * 1000);
+
+        const user = await User.create({
+            email,
+            username: generatedUsername,
+            password: Math.random().toString(36).slice(-10)
+        })
+
+        const createdUser = await User.findById(user._id).select("email username _id");
+
+        const { accessToken, refreshToken } = await generateAccessAndRefereshTokens(user._id)
+
+
+        if (!createdUser) {
+            throw new ApiError(500, "Something went wrong while registering user via Google");
+        }
+
+
+        return res.status(201)
+            .cookie("accessToken", accessToken, options)
+            .cookie("refreshToken", refreshToken, options)
+            .json(
+                new ApiResponse(201, "User registered successfully", {
+                    user: createdUser,
+                    accessToken,
+                    refreshToken
+                })
+            )
+    }
+})
+
+
+export { googleLogin }
