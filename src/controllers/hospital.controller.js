@@ -61,6 +61,8 @@ const registerHospital = asyncHandler(async (req, res) => {
         )
 })
 
+export { registerHospital }
+
 const sendOtp = asyncHandler(async (req, res) => {
     const { email } = req.body;
 
@@ -95,6 +97,8 @@ const sendOtp = asyncHandler(async (req, res) => {
         new ApiResponse(200, "OTP sent successfully to hospital email")
     );
 });
+
+export { sendOtp }
 
 const verifyOtp = asyncHandler(async (req, res) => {
     const { email, otp } = req.body;
@@ -141,6 +145,8 @@ const verifyOtp = asyncHandler(async (req, res) => {
         );
 });
 
+export { verifyOtp }
+
 const loginHospital = asyncHandler(async (req, res) => {
     const { email, password } = req.body;
 
@@ -178,6 +184,8 @@ const loginHospital = asyncHandler(async (req, res) => {
         )
 })
 
+export { loginHospital }
+
 const registerHospitalDetails = asyncHandler(async (req, res) => {
     const hospital = req.user; // Assuming verifyJWT middleware is used
 
@@ -213,6 +221,8 @@ const registerHospitalDetails = asyncHandler(async (req, res) => {
             })
         )
 })
+
+export { registerHospitalDetails }
 
 const refreshAccessToken = asyncHandler(async (req, res) => {
     const incomingRefreshToken = req.cookies.refreshToken || req.body.refreshToken;
@@ -252,6 +262,8 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
     }
 });
 
+export { refreshAccessToken }
+
 const googleLogin = asyncHandler(async (req, res) => {
     const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID_WEB);
     const { tokenID } = req.body;
@@ -289,6 +301,8 @@ const googleLogin = asyncHandler(async (req, res) => {
             .json(new ApiResponse(201, "Hospital registered via Google", { hospital, accessToken, refreshToken }))
     }
 })
+
+export { googleLogin }
 
 const forgotPassword = asyncHandler(async (req, res) => {
 
@@ -328,6 +342,8 @@ const forgotPassword = asyncHandler(async (req, res) => {
         new ApiResponse(200, "OTP sent successfully to your email", { email: hospital.email })
     );
 })
+
+export { forgotPassword }
 
 const resetPassword = asyncHandler(async (req, res) => {
     const { email, otp, newPassword } = req.body;
@@ -373,6 +389,8 @@ const resetPassword = asyncHandler(async (req, res) => {
         );
 });
 
+export { resetPassword }
+
 
 const logoutHospital = asyncHandler(async (req, res) => {
     await Hospital.findByIdAndUpdate(
@@ -383,7 +401,7 @@ const logoutHospital = asyncHandler(async (req, res) => {
             }
         },
         {
-            new: true
+            returnDocument: 'after'
         }
     )
 
@@ -399,16 +417,64 @@ const logoutHospital = asyncHandler(async (req, res) => {
         .json(new ApiResponse(200, "Hospital logged out successfully"))
 })
 
+export { logoutHospital }
 
-export {
-    registerHospital,
-    sendOtp,
-    verifyOtp,
-    loginHospital,
-    registerHospitalDetails,
-    refreshAccessToken,
-    googleLogin,
-    forgotPassword,
-    resetPassword,
-    logoutHospital
-}
+const getHospitalDetails = asyncHandler(async (req, res) => {
+    const hospital = await Hospital.findById(req.user._id);
+
+    if (!hospital) {
+        throw new ApiError(404, "Hospital not found");
+    }
+
+    return res.status(200).json(
+        new ApiResponse(200, "Hospital details fetched successfully", {
+            hospital: {
+                email: hospital.email,
+                name: hospital.name,
+                username: hospital.username,
+                city: hospital.city,
+                district: hospital.district,
+                receptionist_name: hospital.receptionist_name,
+                receptionist_contact_number: hospital.receptionist_contact_number,
+                available_services: hospital.available_services
+            }
+        })
+    );
+});
+
+export { getHospitalDetails }
+
+const updateHospitalDetails = asyncHandler(async (req, res) => {
+    const { city, district, receptionist_name, receptionist_contact_number, available_services } = req.body;
+
+    const updateFields = {};
+    if (city) updateFields.city = city;
+    if (district) updateFields.district = district;
+    if (receptionist_name) updateFields.receptionist_name = receptionist_name;
+    if (receptionist_contact_number) updateFields.receptionist_contact_number = receptionist_contact_number;
+    if (available_services) updateFields.available_services = available_services;
+
+    const updatedHospital = await Hospital.findByIdAndUpdate(
+        req.user._id,
+        {
+            $set: updateFields
+        },
+        {
+            returnDocument: 'after'
+        }
+    );
+
+    if (!updatedHospital) {
+        throw new ApiError(404, "Hospital not found");
+    }
+
+    return res.status(200).json(
+        new ApiResponse(200, "Hospital details updated successfully")
+    );
+});
+
+export { updateHospitalDetails }
+
+
+
+

@@ -9,7 +9,9 @@ import {
     googleLogin,
     forgotPassword,
     resetPassword,
-    logoutHospital
+    logoutHospital,
+    getHospitalDetails,
+    updateHospitalDetails
 } from "../controllers/hospital.controller.js"
 import { verifyJWT } from "../middlewares/auth.middleware.js"
 
@@ -25,5 +27,7 @@ router.route("/register-details").post(verifyJWT, registerHospitalDetails);
 router.route("/forgot-password").post(forgotPassword);
 router.route("/reset-password").post(resetPassword);
 router.route("/logout").post(verifyJWT, logoutHospital);
+router.route("/update-hospital-details").put(verifyJWT, updateHospitalDetails);
+router.route("/get-hospital-details").get(verifyJWT, getHospitalDetails);
 
 export default router;

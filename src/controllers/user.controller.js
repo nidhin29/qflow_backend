@@ -493,7 +493,7 @@ const logoutUser = asyncHandler(async (req, res) => {
                 refresh_token: undefined
             }
         },
-        { new: true }
+        { returnDocument: 'after' }
     )
 
     const logoutOptions = {
@@ -509,3 +509,67 @@ const logoutUser = asyncHandler(async (req, res) => {
 })
 
 export { logoutUser }
+
+
+const updateUserDetails = asyncHandler(async (req, res) => {
+
+    const { first_name, last_name, age, weight, height, gender, blood_group, contact_number } = req.body;
+
+    // Build the update object dynamically (only update fields that are provided)
+    const updateFields = {};
+    if (first_name) updateFields.first_name = first_name;
+    if (last_name) updateFields.last_name = last_name;
+    if (age) updateFields.age = age;
+    if (weight) updateFields.weight = weight;
+    if (height) updateFields.height = height;
+    if (gender) updateFields.gender = gender;
+    if (blood_group) updateFields.blood_group = blood_group;
+    if (contact_number) updateFields.contact_number = contact_number;
+
+    const updatedUser = await User.findByIdAndUpdate(
+        req.user._id,
+        {
+            $set: updateFields
+        },
+        {
+            returnDocument: 'after'
+        }
+    );
+
+    if (!updatedUser) {
+        throw new ApiError(404, "User not found");
+    }
+
+    return res.status(200).json(
+        new ApiResponse(200, "User details updated successfully")
+    );
+});
+
+export { updateUserDetails }
+
+const getUserDetails = asyncHandler(async (req, res) => {
+    const user = await User.findById(req.user._id);
+
+    if (!user) {
+        throw new ApiError(404, "User not found");
+    }
+
+    return res.status(200).json(
+        new ApiResponse(200, "User details fetched successfully", {
+            user: {
+                email: user.email,
+                username: user.username,
+                first_name: user.first_name,
+                last_name: user.last_name,
+                age: user.age,
+                weight: user.weight,
+                height: user.height,
+                gender: user.gender,
+                blood_group: user.blood_group,
+                contact_number: user.contact_number
+            }
+        })
+    );
+});
+
+export { getUserDetails }
