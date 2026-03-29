@@ -6,7 +6,10 @@ import {
     loginHospital,
     registerHospitalDetails,
     refreshAccessToken,
-    googleLogin
+    googleLogin,
+    forgotPassword,
+    resetPassword,
+    logoutHospital
 } from "../controllers/hospital.controller.js"
 import { verifyJWT } from "../middlewares/auth.middleware.js"
 
@@ -19,5 +22,8 @@ router.route("/login").post(loginHospital);
 router.route("/google-login").post(googleLogin);
 router.route("/refresh-token").post(refreshAccessToken);
 router.route("/register-details").post(verifyJWT, registerHospitalDetails);
+router.route("/forgot-password").post(forgotPassword);
+router.route("/reset-password").post(resetPassword);
+router.route("/logout").post(verifyJWT, logoutHospital);
 
 export default router;

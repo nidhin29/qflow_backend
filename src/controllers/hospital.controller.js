@@ -62,13 +62,13 @@ const registerHospital = asyncHandler(async (req, res) => {
 })
 
 const sendOtp = asyncHandler(async (req, res) => {
-    const { _id } = req.body;
+    const { email } = req.body;
 
-    if (!_id) {
-        throw new ApiError(400, "Hospital ID is required");
+    if (!email) {
+        throw new ApiError(400, "Hospital email is required");
     }
 
-    const hospital = await Hospital.findById(_id);
+    const hospital = await Hospital.findOne({ email });
 
     if (!hospital) {
         throw new ApiError(404, "Hospital not found");
@@ -97,13 +97,13 @@ const sendOtp = asyncHandler(async (req, res) => {
 });
 
 const verifyOtp = asyncHandler(async (req, res) => {
-    const { _id, otp } = req.body;
+    const { email, otp } = req.body;
 
-    if (!_id || !otp) {
-        throw new ApiError(400, "Hospital ID and OTP are required");
+    if (!email || !otp) {
+        throw new ApiError(400, "Hospital email and OTP are required");
     }
 
-    const hospital = await Hospital.findById(_id);
+    const hospital = await Hospital.findOne({ email });
 
     if (!hospital) {
         throw new ApiError(404, "Hospital not found");
@@ -131,7 +131,6 @@ const verifyOtp = asyncHandler(async (req, res) => {
         .json(
             new ApiResponse(200, "Hospital email verified successfully!", {
                 hospital: {
-                    _id: hospital._id,
                     email: hospital.email,
                     name: hospital.name,
                     isEmailVerified: hospital.isEmailVerified
@@ -291,20 +290,18 @@ const googleLogin = asyncHandler(async (req, res) => {
     }
 })
 
-const forgotPassword = asyncHandler( async (req,res)=> {
+const forgotPassword = asyncHandler(async (req, res) => {
 
     const { email } = req.body;
-    
-    if(!email)
-    {
-        throw new ApiError(400,"email is required");
+
+    if (!email) {
+        throw new ApiError(400, "email is required");
     }
 
-    const hospital = await Hospital.findOne({email});
+    const hospital = await Hospital.findOne({ email });
 
-    if(!hospital)
-    {
-        throw new ApiError(400,"not a valid hospital");
+    if (!hospital) {
+        throw new ApiError(400, "not a valid hospital");
     }
 
     // Generate 6-digit OTP and set expiry (15 minutes)
@@ -328,9 +325,80 @@ const forgotPassword = asyncHandler( async (req,res)=> {
     }
 
     return res.status(200).json(
-        new ApiResponse(200, "OTP sent successfully to your email")
+        new ApiResponse(200, "OTP sent successfully to your email", { email: hospital.email })
     );
 })
+
+const resetPassword = asyncHandler(async (req, res) => {
+    const { email, otp, newPassword } = req.body;
+
+    if (!email || !otp || !newPassword) {
+        throw new ApiError(400, "Email, OTP and New Password are required");
+    }
+
+    const hospital = await Hospital.findOne({ email });
+
+    if (!hospital) {
+        throw new ApiError(404, "Hospital not found");
+    }
+
+    if (hospital.emailVerificationOTP !== Number(otp)) {
+        throw new ApiError(400, "Invalid OTP");
+    }
+
+    if (hospital.emailVerificationOTPExpiry < Date.now()) {
+        throw new ApiError(400, "OTP has expired. Please request a new one.");
+    }
+
+    hospital.password = newPassword;
+    hospital.emailVerificationOTP = undefined;
+    hospital.emailVerificationOTPExpiry = undefined;
+
+    const { accessToken, refreshToken } = await generateAccessAndRefereshTokens(hospital._id);
+
+    hospital.refresh_token = refreshToken;
+
+    await hospital.save();
+
+    return res
+        .status(200)
+        .cookie("accessToken", accessToken, options)
+        .cookie("refreshToken", refreshToken, options)
+        .json(
+            new ApiResponse(
+                200,
+                "Hospital password reset successfully! You are now logged in.",
+                { hospital: { email: hospital.email, name: hospital.name }, accessToken, refreshToken }
+            )
+        );
+});
+
+
+const logoutHospital = asyncHandler(async (req, res) => {
+    await Hospital.findByIdAndUpdate(
+        req.user._id,
+        {
+            $set: {
+                refresh_token: undefined
+            }
+        },
+        {
+            new: true
+        }
+    )
+
+    const logoutOptions = {
+        httpOnly: true,
+        secure: true
+    }
+
+    return res
+        .status(200)
+        .clearCookie("accessToken", logoutOptions)
+        .clearCookie("refreshToken", logoutOptions)
+        .json(new ApiResponse(200, "Hospital logged out successfully"))
+})
+
 
 export {
     registerHospital,
@@ -340,5 +408,7 @@ export {
     registerHospitalDetails,
     refreshAccessToken,
     googleLogin,
-    forgotPassword
+    forgotPassword,
+    resetPassword,
+    logoutHospital
 }

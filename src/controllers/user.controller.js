@@ -68,13 +68,13 @@ export { registerUser }
 
 
 const sendOtp = asyncHandler(async (req, res) => {
-    const { _id } = req.body;
+    const { email } = req.body;
 
-    if (!_id) {
+    if (!email) {
         throw new ApiError(400, "User ID is required");
     }
 
-    const user = await User.findById(_id);
+    const user = await User.findOne({ email });
 
     if (!user) {
         throw new ApiError(404, "User not found");
@@ -109,13 +109,13 @@ export { sendOtp }
 
 
 const verifyOtp = asyncHandler(async (req, res) => {
-    const { _id, otp } = req.body;
+    const { email, otp } = req.body;
 
-    if (!_id || !otp) {
-        throw new ApiError(400, "User ID and OTP are required");
+    if (!email || !otp) {
+        throw new ApiError(400, "Email and OTP are required");
     }
 
-    const user = await User.findById(_id);
+    const user = await User.findOne({ email });
 
     if (!user) {
         throw new ApiError(404, "User not found");
@@ -147,7 +147,6 @@ const verifyOtp = asyncHandler(async (req, res) => {
         .json(
             new ApiResponse(200, "Email verified successfully!", {
                 user: {
-                    _id: user._id,
                     email: user.email,
                     username: user.username,
                     isEmailVerified: user.isEmailVerified
@@ -397,20 +396,18 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
 
 export { refreshAccessToken }
 
-const forgotPassword = asyncHandler( async (req,res)=> {
+const forgotPassword = asyncHandler(async (req, res) => {
 
     const { email } = req.body;
-    
-    if(!email)
-    {
-        throw new ApiError(400,"email is required");
+
+    if (!email) {
+        throw new ApiError(400, "email is required");
     }
 
-    const user = await User.findOne({email});
+    const user = await User.findOne({ email });
 
-    if(!user)
-    {
-        throw new ApiError(400,"not a valid user");
+    if (!user) {
+        throw new ApiError(400, "not a valid user");
     }
 
     // Generate 6-digit OTP and set expiry (15 minutes)
@@ -434,8 +431,81 @@ const forgotPassword = asyncHandler( async (req,res)=> {
     }
 
     return res.status(200).json(
-        new ApiResponse(200, "OTP sent successfully to your email")
+        new ApiResponse(200, "OTP sent successfully to your email", user.email)
     );
 })
 
-export {forgotPassword}
+export { forgotPassword }
+
+const resetPassword = asyncHandler(async (req, res) => {
+    const { email, otp, newPassword } = req.body;
+
+    if (!email || !otp || !newPassword) {
+        throw new ApiError(400, "Email, OTP and New Password are required");
+    }
+
+    const user = await User.findOne({ email });
+
+    if (!user) {
+        throw new ApiError(404, "User not found");
+    }
+
+    if (user.emailVerificationOTP !== Number(otp)) {
+        throw new ApiError(400, "Invalid OTP");
+    }
+
+    if (user.emailVerificationOTPExpiry < Date.now()) {
+        throw new ApiError(400, "OTP has expired. Please request a new one.");
+    }
+
+    user.password = newPassword;
+    user.emailVerificationOTP = undefined;
+    user.emailVerificationOTPExpiry = undefined;
+
+    const { accessToken, refreshToken } = await generateAccessAndRefereshTokens(user._id);
+
+    user.refresh_token = refreshToken;
+
+    await user.save();
+
+    return res
+        .status(200)
+        .cookie("accessToken", accessToken, options)
+        .cookie("refreshToken", refreshToken, options)
+        .json(
+            new ApiResponse(
+                200,
+                "Password reset successfully! You can now login.",
+                { user: { email: user.email, username: user.username }, accessToken, refreshToken }
+            )
+        );
+
+});
+
+export { resetPassword }
+
+
+const logoutUser = asyncHandler(async (req, res) => {
+    await User.findByIdAndUpdate(
+        req.user._id,
+        {
+            $set: {
+                refresh_token: undefined
+            }
+        },
+        { new: true }
+    )
+
+    const logoutOptions = {
+        httpOnly: true,
+        secure: true
+    }
+
+    return res
+        .status(200)
+        .clearCookie("accessToken", logoutOptions)
+        .clearCookie("refreshToken", logoutOptions)
+        .json(new ApiResponse(200, "User logged out successfully"))
+})
+
+export { logoutUser }
