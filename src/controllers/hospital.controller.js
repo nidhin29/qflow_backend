@@ -187,7 +187,7 @@ const loginHospital = asyncHandler(async (req, res) => {
 export { loginHospital }
 
 const registerHospitalDetails = asyncHandler(async (req, res) => {
-    const hospital = req.user; // Assuming verifyJWT middleware is used
+    const hospital = req.user; 
 
     const {
         city,

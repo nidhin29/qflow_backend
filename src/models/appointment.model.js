@@ -1,4 +1,5 @@
 import mongoose, { Schema } from "mongoose";
+import mongooseAggregatePaginate from "mongoose-aggregate-paginate";
 
 const appointmentSchema = new Schema(
     {
@@ -23,5 +24,7 @@ const appointmentSchema = new Schema(
     },
     { timestamps: true }
 );
+
+appointmentSchema.plugin(mongooseAggregatePaginate);
 
 export const Appointment = mongoose.model("Appointment", appointmentSchema);
