@@ -1,39 +1,51 @@
+import bcrypt from "bcrypt";
 import mongoose, { Schema } from "mongoose";
 import mongooseAggregatePaginate from "mongoose-aggregate-paginate-v2";
+import jwt from "jsonwebtoken";
 
 const hospitalSchema = new Schema(
     {
+        email: {
+            type: String,
+            required: true,
+            unique: true,
+            trim: true,
+            lowercase: true
+        },
+        password: {
+            type: String,
+            required: [true, 'Password is required']
+        },
+        username: {
+            type: String,
+            unique: true,
+            trim: true,
+            lowercase: true
+        },
         name: {
             type: String,
             required: true
         },
         city: {
             type: String,
-            required: true
         },
         district: {
             type: String,
-            required: true
         },
         profile_image: {
             type: String,
-            required: true
         },
         receptionist_name: {
             type: String,
-            required: true
         },
         receptionist_contact_number: {
             type: Number,
-            required: true
         },
         receptionist_image: {
             type: String,
-            required: true
         },
         available_services: {
             type: [String],
-            required: true
         },
         appointments: {
             type: [Schema.Types.ObjectId],
@@ -41,11 +53,66 @@ const hospitalSchema = new Schema(
         },
         rating: {
             type: Number,
-            required: true
+            default: 0
         },
+        is_recommended: {
+            type: Boolean,
+            default: false
+        },
+        refresh_token: {
+            type: String
+        },
+        emailVerificationOTP: {
+            type: Number
+        },
+        emailVerificationOTPExpiry: {
+            type: Date
+        },
+        isEmailVerified: {
+            type: Boolean,
+            default: false
+        }
     },
     { timestamps: true }
 );
+
+hospitalSchema.pre("save", async function (next) {
+    if (!this.isModified("password")) return next();
+    this.password = await bcrypt.hash(this.password, 10);
+    next();
+});
+
+hospitalSchema.methods.isPasswordCorrect = async function (password) {
+    return await bcrypt.compare(password, this.password);
+};
+
+hospitalSchema.methods.generateAccessToken = function () {
+    return jwt.sign(
+        {
+            _id: this._id,
+            email: this.email,
+            username: this.username,
+            name: this.name,
+            role: "hospital"
+        },
+        process.env.ACCESS_TOKEN_SECRET,
+        {
+            expiresIn: process.env.ACCESS_TOKEN_EXPIRY
+        }
+    );
+};
+
+hospitalSchema.methods.generateRefreshToken = function () {
+    return jwt.sign(
+        {
+            _id: this._id,
+        },
+        process.env.REFRESH_TOKEN_SECRET,
+        {
+            expiresIn: process.env.REFRESH_TOKEN_EXPIRY
+        }
+    );
+};
 
 hospitalSchema.plugin(mongooseAggregatePaginate);
 

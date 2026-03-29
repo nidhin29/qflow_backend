@@ -396,3 +396,46 @@ const refreshAccessToken = asyncHandler(async (req, res) => {
 
 
 export { refreshAccessToken }
+
+const forgotPassword = asyncHandler( async (req,res)=> {
+
+    const { email } = req.body;
+    
+    if(!email)
+    {
+        throw new ApiError(400,"email is required");
+    }
+
+    const user = await User.findOne({email});
+
+    if(!user)
+    {
+        throw new ApiError(400,"not a valid user");
+    }
+
+    // Generate 6-digit OTP and set expiry (15 minutes)
+    const otp = Math.floor(100000 + Math.random() * 900000);
+    const otpExpiry = new Date(Date.now() + 15 * 60 * 1000);
+
+    // Save OTP and Expiry to the user in the database
+    user.emailVerificationOTP = otp;
+    user.emailVerificationOTPExpiry = otpExpiry;
+    await user.save({ validateBeforeSave: false });
+
+    // Send the email
+    try {
+        await sendEmail({
+            email: user.email,
+            subject: "Your Qflow Verification OTP",
+            message: `Your verification code is ${otp}. It will expire in 15 minutes.`
+        });
+    } catch (error) {
+        throw new ApiError(500, "Something went wrong while sending the email. Please try again.");
+    }
+
+    return res.status(200).json(
+        new ApiResponse(200, "OTP sent successfully to your email")
+    );
+})
+
+export {forgotPassword}
