@@ -21,7 +21,7 @@ const sendEmail = async (options) => {
         await transporter.sendMail(mailOptions);
     } catch (error) {
         console.error("DEBUG: Nodemailer Error Detail:", error);
-        throw error; // Still throw so the controller catches it
+        throw error;
     }
 };
 

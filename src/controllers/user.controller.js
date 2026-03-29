@@ -4,6 +4,7 @@ import { ApiError } from "../utils/ApiError.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import { OAuth2Client } from "google-auth-library";
 import { sendEmail } from "../utils/sendEmail.js";
+import jwt from "jsonwebtoken"
 
 const generateAccessAndRefereshTokens = async (userId) => {
     try {
@@ -67,13 +68,13 @@ export { registerUser }
 
 
 const sendOtp = asyncHandler(async (req, res) => {
-    const { email } = req.body;
+    const { _id } = req.body;
 
-    if (!email) {
-        throw new ApiError(400, "Email is required");
+    if (!_id) {
+        throw new ApiError(400, "User ID is required");
     }
 
-    const user = await User.findOne({ email });
+    const user = await User.findById(_id);
 
     if (!user) {
         throw new ApiError(404, "User not found");
@@ -108,13 +109,13 @@ export { sendOtp }
 
 
 const verifyOtp = asyncHandler(async (req, res) => {
-    const { email, otp } = req.body;
+    const { _id, otp } = req.body;
 
-    if (!email || !otp) {
-        throw new ApiError(400, "Email and OTP are required");
+    if (!_id || !otp) {
+        throw new ApiError(400, "User ID and OTP are required");
     }
 
-    const user = await User.findOne({ email });
+    const user = await User.findById(_id);
 
     if (!user) {
         throw new ApiError(404, "User not found");
@@ -303,3 +304,95 @@ const loginUser = asyncHandler(async (req, res) => {
 })
 
 export { loginUser }
+
+
+const registerUserDetails = asyncHandler(async (req, res) => {
+    const user = req.user;
+
+    const { username, first_name, last_name, age, weight, height, gender, blood_group, contact_number } = req.body;
+
+
+    if (!username || !first_name || !last_name || !age || !weight || !height || !gender || !blood_group || !contact_number) {
+        throw new ApiError(400, "All fields are required");
+    }
+
+    if (!user) {
+        throw new ApiError(404, "User not found");
+    }
+
+    const existingUserWithUsername = await User.findOne({ username });
+
+    if (existingUserWithUsername && existingUserWithUsername._id.toString() !== user._id.toString()) {
+        throw new ApiError(400, "Username is already taken");
+    }
+
+    user.username = username;
+    user.first_name = first_name;
+    user.last_name = last_name;
+    user.age = age;
+    user.weight = weight;
+    user.height = height;
+    user.gender = gender;
+    user.blood_group = blood_group;
+    user.contact_number = contact_number;
+
+    await user.save();
+
+    return res.status(200)
+        .json(
+            new ApiResponse(200, "User details registered successfully", {
+                user: {
+                    _id: user._id,
+                    email: user.email,
+                    username: user.username
+                }
+            })
+        )
+})
+
+export { registerUserDetails }
+
+
+const refreshAccessToken = asyncHandler(async (req, res) => {
+    const incomingRefreshToken = req.cookies.refreshToken || req.body.refreshToken;
+
+    if (!incomingRefreshToken) {
+        throw new ApiError(401, "No refresh token found");
+    }
+
+    try {
+        const decodedToken = jwt.verify(incomingRefreshToken, process.env.REFRESH_TOKEN_SECRET);
+
+        const user = await User.findById(decodedToken._id);
+
+        if (!user) {
+            throw new ApiError(401, "Invalid refresh token");
+        }
+
+        if (incomingRefreshToken !== user.refresh_token) {
+            throw new ApiError(401, "Refresh token is expired or used");
+        }
+
+        const { accessToken, refreshToken: newRefreshToken } = await generateAccessAndRefereshTokens(user._id);
+
+        user.refresh_token = newRefreshToken;
+        await user.save({ validateBeforeSave: false });
+
+        return res
+            .status(200)
+            .cookie("accessToken", accessToken, options)
+            .cookie("refreshToken", newRefreshToken, options)
+            .json(
+                new ApiResponse(
+                    200,
+                    "Access token refreshed successfully",
+                    { accessToken, refreshToken: newRefreshToken }
+                )
+            );
+    } catch (error) {
+        throw new ApiError(401, error?.message || "Invalid refresh token");
+    }
+});
+
+
+export { refreshAccessToken }
