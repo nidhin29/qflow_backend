@@ -37,7 +37,7 @@ const getUserAppointments = asyncHandler(async (req, res) => {
                 from: "users",
                 localField: "patient_id",
                 foreignField: "_id",
-                as: "userDetails"
+                as: "userAppointmentDetails"
             }
         }
     ]);

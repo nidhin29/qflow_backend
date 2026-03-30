@@ -168,6 +168,26 @@ const loginHospital = asyncHandler(async (req, res) => {
 
     const { accessToken, refreshToken } = await generateAccessAndRefereshTokens(hospital._id)
 
+    if(!hospital.city || !hospital.district || 
+        !hospital.receptionist_name || !hospital.receptionist_contact_number || 
+        !hospital.available_services){
+
+        return res.status(201)
+        .cookie("accessToken", accessToken, options)
+        .cookie("refreshToken", refreshToken, options)
+        .json(
+            new ApiResponse(201, "Hospital logged in successfully but profile is incomplete", {
+                hospital: {
+                    _id: hospital._id,
+                    email: hospital.email,
+                    name: hospital.name
+                },
+                accessToken,
+                refreshToken
+            })
+        )
+    }
+
     return res.status(200)
         .cookie("accessToken", accessToken, options)
         .cookie("refreshToken", refreshToken, options)

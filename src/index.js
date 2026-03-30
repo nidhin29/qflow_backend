@@ -3,6 +3,7 @@ dns.setServers(['8.8.8.8', '8.8.4.4']);
 import dotenv from "dotenv"
 import { connectDB } from "./db/index.js"
 import { app } from "./app.js"
+import { connectRedis } from "./db/redis.js";
 
 dotenv.config(
     {
@@ -12,13 +13,15 @@ dotenv.config(
 
 
 
-connectDB().then(() => {
-    app.listen(process.env.PORT || 8000, () => {
-        console.log(`Server is running on port ${process.env.PORT}`);
+Promise.all([connectDB(), connectRedis()])
+    .then(() => {
+        app.listen(process.env.PORT || 8000, () => {
+            console.log(`Server is running on port ${process.env.PORT}`);
+        });
     })
-}).catch((err) => {
-    console.log("MONGODB connection error ", err);
-    process.exit(1);
-})
+    .catch((err) => {
+        console.error("Database connection error: ", err);
+        process.exit(1);
+    });
 
 
