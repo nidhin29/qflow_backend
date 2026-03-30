@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { upcomingAppointmentsUser, pastAppointmentsUser } from "../controllers/appointment.controller.js";
+import { getUserAppointments } from "../controllers/appointment.controller.js";
 import { verifyJWT } from "../middlewares/auth.middleware.js";
 
 const router = Router();
@@ -8,7 +8,7 @@ const router = Router();
 router.use(verifyJWT);
 
 // Routes
-router.route("/upcoming-appointments-user").get(upcomingAppointmentsUser);
-router.route("/past-appointments-user").get(pastAppointmentsUser);
+// Use a single route for appointments, differentiated by `?type=upcoming` or `?type=past`
+router.route("/user-appointments").get(getUserAppointments);
 
 export default router;

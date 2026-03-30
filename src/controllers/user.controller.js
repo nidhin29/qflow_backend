@@ -185,8 +185,7 @@ const googleLogin = asyncHandler(async (req, res) => {
         !existingUser.last_name || !existingUser.age ||
         !existingUser.weight || !existingUser.height ||
         !existingUser.gender || !existingUser.blood_group
-        || !existingUser.contact_number ||
-        !existingUser.profile_image)) {
+        || !existingUser.contact_number)) {
 
         const userData = {
             _id: existingUser._id,
@@ -285,6 +284,27 @@ const loginUser = asyncHandler(async (req, res) => {
     }
 
     const { accessToken, refreshToken } = await generateAccessAndRefereshTokens(user._id)
+
+    if(!user.first_name || !user.last_name || 
+        !user.age || !user.weight ||
+         !user.height || !user.gender || 
+         !user.blood_group || !user.contact_number){
+
+        return res.status(201)
+        .cookie("accessToken", accessToken, options)
+        .cookie("refreshToken", refreshToken, options)
+        .json(
+            new ApiResponse(201, "User logged in successfully but profile is incomplete", {
+                user: {
+                    _id: user._id,
+                    email: user.email,
+                    username: user.username
+                },
+                accessToken,
+                refreshToken
+            })
+        )
+    }
 
     return res.status(200)
         .cookie("accessToken", accessToken, options)

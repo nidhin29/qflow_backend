@@ -1,108 +1,58 @@
-import { asyncHandler } from "../utils/asyncHandler";
-import { User } from "../models/user.model";
+import { asyncHandler } from "../utils/asyncHandler.js";
+import { ApiError } from "../utils/ApiError.js";
+import { ApiResponse } from "../utils/ApiResponse.js";
+import { Appointment } from "../models/appointment.model.js";
 import mongoose from "mongoose";
 
+const getUserAppointments = asyncHandler(async (req, res) => {
+    // 1. Extract page, limit, and the 'type' of appointments to fetch
+    const { page = 1, limit = 10, type = "upcoming" } = req.query;
 
+    // 2. Build our dynamic matching condition based on the 'type' parameter
+    const matchCondition = {
+        patient_id: new mongoose.Types.ObjectId(req.user._id)
+    };
 
-const upcomingAppointmentsUser = asyncHandler(
-    async (req,res) => {
-
-        const {page = 1, limit = 10} = req.query;
-
-        const userWithUpcomingAppointments = await User.aggregate(
-            [
-                {
-                    $match: {
-                        _id: mongoose.Types.ObjectId(req.user._id),
-                        $gte: new Date()
-                    },
-                    $sort: {
-                        appointment_date: 1
-                    },
-
-                    $lookup:{
-                        from: "appointments",
-                        localField: "_id",
-                        foreignField: "patient_id",
-                        as: "upcomingAppointments"
-                    }
-                },
-                {
-                    $project: {
-                        upcomingAppointments: 1
-                    }
-                }
-            ]
-        )
-
-        if(!userWithUpcomingAppointments || userWithUpcomingAppointments.length === 0){
-            throw new ApiError(404, "User not found");
-        }
-
-        const options = {
-            page: parseInt(page),
-            limit: parseInt(limit),
-            
-        }
-
-        const result = await Appointment.aggregatePaginate(userWithUpcomingAppointments, options);
-
-        return res.status(200).json(
-            new ApiResponse(200, "Upcoming appointments fetched successfully", result)
-        )
+    if (type === "upcoming") {
+        matchCondition.appointment_date = { $gte: new Date() };
+    } else if (type === "past") {
+        matchCondition.appointment_date = { $lt: new Date() };
+    } else {
+        throw new ApiError(400, "Invalid appointment type parameter. Must be 'upcoming' or 'past'.");
     }
-)
 
-export { upcomingAppointmentsUser }
+    // Sort upcoming from nearest to furthest, and past from most recent to oldest
+    const sortOrder = type === "upcoming" ? 1 : -1;
 
-
-const pastAppointmentsUser = asyncHandler(
-    async (req,res) => {
-
-        const {page = 1, limit = 10} = req.query;
-
-        const userWithPastAppointments = await User.aggregate(
-            [
-                {
-                    $match: {
-                        _id: mongoose.Types.ObjectId(req.user._id),
-                        $lte: new Date()
-                    },
-                    $sort: {
-                        appointment_date: -1
-                    },
-
-                    $lookup:{
-                        from: "appointments",
-                        localField: "_id",
-                        foreignField: "patient_id",
-                        as: "pastAppointments"
-                    }
-                },
-                {
-                    $project: {
-                        pastAppointments: 1
-                    }
-                }
-            ]
-        )
-
-        if(!userWithPastAppointments || userWithPastAppointments.length === 0){
-            throw new ApiError(404, "User not found");
+    // 3. Define the Aggregate pipeline query (do NOT await it, because we need to hand it to paginate)
+    const aggregateQuery = Appointment.aggregate([
+        {
+            $match: matchCondition
+        },
+        {
+            $sort: { appointment_date: sortOrder }
+        },
+        {
+            $lookup: {
+                from: "users",
+                localField: "patient_id",
+                foreignField: "_id",
+                as: "userDetails"
+            }
         }
+    ]);
 
-        const options = {
-            page: parseInt(page),
-            limit: parseInt(limit),
-            
-        }
+    const options = {
+        page: parseInt(page, 10),
+        limit: parseInt(limit, 10)
+    };
 
-        const result = await Appointment.aggregatePaginate(userWithPastAppointments, options);
+    // 4. Pass the pipeline query into aggregatePaginate
+    const result = await Appointment.aggregatePaginate(aggregateQuery, options);
 
-        return res.status(200).json(
-            new ApiResponse(200, "Past appointments fetched successfully", result)
-        )
-    }
-)
+    return res.status(200).json(
+        new ApiResponse(200, `${type === 'upcoming' ? 'Upcoming' : 'Past'} appointments fetched successfully`, result)
+    );
+});
 
-export { pastAppointmentsUser }
+export { getUserAppointments };

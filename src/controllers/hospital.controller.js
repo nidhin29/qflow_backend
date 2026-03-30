@@ -187,7 +187,7 @@ const loginHospital = asyncHandler(async (req, res) => {
 export { loginHospital }
 
 const registerHospitalDetails = asyncHandler(async (req, res) => {
-    const hospital = req.user; 
+    const hospital = req.user;
 
     const {
         city,
@@ -476,5 +476,48 @@ const updateHospitalDetails = asyncHandler(async (req, res) => {
 export { updateHospitalDetails }
 
 
+const getHospitalLocations = asyncHandler(async (req, res) => {
+
+    const locations = await Hospital.distinct("city");
+
+    return res.status(200).json(
+        new ApiResponse(200, "Hospital locations fetched successfully", locations)
+    )
+})
+
+export { getHospitalLocations }
+
+
+const getHospitalsByLocation = asyncHandler(
+    async (req, res) => {
+        1
+        const { page = 1, limit = 10, location } = req.query;
+
+        if (!location) {
+            throw new ApiError(400, "Location parameter is required");
+        }
+
+        const hospitalsAggregateQuery = Hospital.aggregate([
+            {
+                $match: {
+                    city: location
+                }
+            }
+        ]);
+
+        const options = {
+            page: parseInt(page, 10),
+            limit: parseInt(limit, 10)
+        }
+
+        const result = await Hospital.aggregatePaginate(hospitalsAggregateQuery, options);
+
+        return res.status(200).json(
+            new ApiResponse(200, "Hospitals fetched successfully", result)
+        )
+    }
+)
+
+export { getHospitalsByLocation }
 
 
