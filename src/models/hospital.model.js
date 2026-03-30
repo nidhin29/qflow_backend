@@ -62,12 +62,6 @@ const hospitalSchema = new Schema(
         refresh_token: {
             type: String
         },
-        emailVerificationOTP: {
-            type: Number
-        },
-        emailVerificationOTPExpiry: {
-            type: Date
-        },
         isEmailVerified: {
             type: Boolean,
             default: false

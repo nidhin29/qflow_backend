@@ -4,7 +4,8 @@ import { ApiError } from "../utils/ApiError.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import { OAuth2Client } from "google-auth-library";
 import { sendEmail } from "../utils/sendEmail.js";
-import jwt from "jsonwebtoken"
+import jwt from "jsonwebtoken";
+import { redisClient } from "../db/redis.js";
 
 const generateAccessAndRefereshTokens = async (userId) => {
     try {
@@ -80,14 +81,15 @@ const sendOtp = asyncHandler(async (req, res) => {
         throw new ApiError(404, "User not found");
     }
 
-    // Generate 6-digit OTP and set expiry (15 minutes)
+    // Generate 6-digit OTP
     const otp = Math.floor(100000 + Math.random() * 900000);
-    const otpExpiry = new Date(Date.now() + 15 * 60 * 1000);
 
-    // Save OTP and Expiry to the user in the database
-    user.emailVerificationOTP = otp;
-    user.emailVerificationOTPExpiry = otpExpiry;
-    await user.save({ validateBeforeSave: false });
+    // Save OTP to Redis with a 15-minute (900 seconds) expiration
+    try {
+        await redisClient.setEx(`otp:user:${email}`, 900, otp.toString());
+    } catch (error) {
+        throw new ApiError(500, "Failed to generate OTP securely. Please try again.");
+    }
 
     // Send the email
     try {
@@ -121,22 +123,19 @@ const verifyOtp = asyncHandler(async (req, res) => {
         throw new ApiError(404, "User not found");
     }
 
-    // Check if OTP matches
-    if (user.emailVerificationOTP !== Number(otp)) {
+    // Verify OTP against Redis Cache
+    const cachedOtp = await redisClient.get(`otp:user:${email}`);
+    if (!cachedOtp) {
+        throw new ApiError(400, "OTP has expired or does not exist. Please request a new one.");
+    }
+    if (cachedOtp !== otp.toString()) {
         throw new ApiError(400, "Invalid OTP");
     }
 
-    // Check if OTP is expired
-    if (user.emailVerificationOTPExpiry < Date.now()) {
-        throw new ApiError(400, "OTP has expired. Please request a new one.");
-    }
-
-    // Verify user and clear OTP fields
+    // OTP is valid, verify user and clean up Redis
     user.isEmailVerified = true;
-    user.emailVerificationOTP = undefined;
-    user.emailVerificationOTPExpiry = undefined;
-
     await user.save({ validateBeforeSave: false });
+    await redisClient.del(`otp:user:${email}`);
 
     // Generate tokens so user is logged in immediately after verification
     const { accessToken, refreshToken } = await generateAccessAndRefereshTokens(user._id);
@@ -285,25 +284,25 @@ const loginUser = asyncHandler(async (req, res) => {
 
     const { accessToken, refreshToken } = await generateAccessAndRefereshTokens(user._id)
 
-    if(!user.first_name || !user.last_name || 
+    if (!user.first_name || !user.last_name ||
         !user.age || !user.weight ||
-         !user.height || !user.gender || 
-         !user.blood_group || !user.contact_number){
+        !user.height || !user.gender ||
+        !user.blood_group || !user.contact_number) {
 
         return res.status(201)
-        .cookie("accessToken", accessToken, options)
-        .cookie("refreshToken", refreshToken, options)
-        .json(
-            new ApiResponse(201, "User logged in successfully but profile is incomplete", {
-                user: {
-                    _id: user._id,
-                    email: user.email,
-                    username: user.username
-                },
-                accessToken,
-                refreshToken
-            })
-        )
+            .cookie("accessToken", accessToken, options)
+            .cookie("refreshToken", refreshToken, options)
+            .json(
+                new ApiResponse(201, "User logged in successfully but profile is incomplete", {
+                    user: {
+                        _id: user._id,
+                        email: user.email,
+                        username: user.username
+                    },
+                    accessToken,
+                    refreshToken
+                })
+            )
     }
 
     return res.status(200)
@@ -430,14 +429,15 @@ const forgotPassword = asyncHandler(async (req, res) => {
         throw new ApiError(400, "not a valid user");
     }
 
-    // Generate 6-digit OTP and set expiry (15 minutes)
+    // Generate 6-digit OTP
     const otp = Math.floor(100000 + Math.random() * 900000);
-    const otpExpiry = new Date(Date.now() + 15 * 60 * 1000);
 
-    // Save OTP and Expiry to the user in the database
-    user.emailVerificationOTP = otp;
-    user.emailVerificationOTPExpiry = otpExpiry;
-    await user.save({ validateBeforeSave: false });
+    // Save OTP to Redis with a 15-minute (900 seconds) expiration
+    try {
+        await redisClient.setEx(`otp:user:${email}`, 900, otp.toString());
+    } catch (error) {
+        throw new ApiError(500, "Failed to process OTP request. Please try again.");
+    }
 
     // Send the email
     try {
@@ -470,17 +470,18 @@ const resetPassword = asyncHandler(async (req, res) => {
         throw new ApiError(404, "User not found");
     }
 
-    if (user.emailVerificationOTP !== Number(otp)) {
+    // Verify OTP against Redis Cache
+    const cachedOtp = await redisClient.get(`otp:user:${email}`);
+    if (!cachedOtp) {
+        throw new ApiError(400, "OTP has expired or does not exist. Please request a new one.");
+    }
+    if (cachedOtp !== otp.toString()) {
         throw new ApiError(400, "Invalid OTP");
     }
 
-    if (user.emailVerificationOTPExpiry < Date.now()) {
-        throw new ApiError(400, "OTP has expired. Please request a new one.");
-    }
-
+    // Update password and clean up Redis
     user.password = newPassword;
-    user.emailVerificationOTP = undefined;
-    user.emailVerificationOTPExpiry = undefined;
+    await redisClient.del(`otp:user:${email}`);
 
     const { accessToken, refreshToken } = await generateAccessAndRefereshTokens(user._id);
 

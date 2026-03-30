@@ -5,7 +5,7 @@ import { ApiResponse } from "../utils/ApiResponse.js";
 import { OAuth2Client } from "google-auth-library";
 import { sendEmail } from "../utils/sendEmail.js";
 import jwt from "jsonwebtoken";
-
+import { redisClient } from "../db/redis.js";
 const generateAccessAndRefereshTokens = async (hospitalId) => {
     try {
         const hospital = await Hospital.findById(hospitalId)
@@ -77,11 +77,13 @@ const sendOtp = asyncHandler(async (req, res) => {
     }
 
     const otp = Math.floor(100000 + Math.random() * 900000);
-    const otpExpiry = new Date(Date.now() + 15 * 60 * 1000);
 
-    hospital.emailVerificationOTP = otp;
-    hospital.emailVerificationOTPExpiry = otpExpiry;
-    await hospital.save({ validateBeforeSave: false });
+    // Save OTP to Redis with a 15-minute (900 seconds) expiration
+    try {
+        await redisClient.setEx(`otp:hospital:${email}`, 900, otp.toString());
+    } catch (error) {
+        throw new ApiError(500, "Failed to generate OTP securely. Please try again.");
+    }
 
     try {
         await sendEmail({
@@ -113,19 +115,19 @@ const verifyOtp = asyncHandler(async (req, res) => {
         throw new ApiError(404, "Hospital not found");
     }
 
-    if (hospital.emailVerificationOTP !== Number(otp)) {
+    // Verify OTP against Redis Cache
+    const cachedOtp = await redisClient.get(`otp:hospital:${email}`);
+    if (!cachedOtp) {
+        throw new ApiError(400, "OTP has expired or does not exist. Please request a new one.");
+    }
+    if (cachedOtp !== otp.toString()) {
         throw new ApiError(400, "Invalid OTP");
     }
 
-    if (hospital.emailVerificationOTPExpiry < Date.now()) {
-        throw new ApiError(400, "OTP has expired. Please request a new one.");
-    }
-
+    // OTP is valid, verify the hospital and clean up Redis
     hospital.isEmailVerified = true;
-    hospital.emailVerificationOTP = undefined;
-    hospital.emailVerificationOTPExpiry = undefined;
-
     await hospital.save({ validateBeforeSave: false });
+    await redisClient.del(`otp:hospital:${email}`);
 
     const { accessToken, refreshToken } = await generateAccessAndRefereshTokens(hospital._id);
 
@@ -168,24 +170,24 @@ const loginHospital = asyncHandler(async (req, res) => {
 
     const { accessToken, refreshToken } = await generateAccessAndRefereshTokens(hospital._id)
 
-    if(!hospital.city || !hospital.district || 
-        !hospital.receptionist_name || !hospital.receptionist_contact_number || 
-        !hospital.available_services){
+    if (!hospital.city || !hospital.district ||
+        !hospital.receptionist_name || !hospital.receptionist_contact_number ||
+        !hospital.available_services) {
 
         return res.status(201)
-        .cookie("accessToken", accessToken, options)
-        .cookie("refreshToken", refreshToken, options)
-        .json(
-            new ApiResponse(201, "Hospital logged in successfully but profile is incomplete", {
-                hospital: {
-                    _id: hospital._id,
-                    email: hospital.email,
-                    name: hospital.name
-                },
-                accessToken,
-                refreshToken
-            })
-        )
+            .cookie("accessToken", accessToken, options)
+            .cookie("refreshToken", refreshToken, options)
+            .json(
+                new ApiResponse(201, "Hospital logged in successfully but profile is incomplete", {
+                    hospital: {
+                        _id: hospital._id,
+                        email: hospital.email,
+                        name: hospital.name
+                    },
+                    accessToken,
+                    refreshToken
+                })
+            )
     }
 
     return res.status(200)
@@ -338,14 +340,15 @@ const forgotPassword = asyncHandler(async (req, res) => {
         throw new ApiError(400, "not a valid hospital");
     }
 
-    // Generate 6-digit OTP and set expiry (15 minutes)
+    // Generate 6-digit OTP
     const otp = Math.floor(100000 + Math.random() * 900000);
-    const otpExpiry = new Date(Date.now() + 15 * 60 * 1000);
 
-    // Save OTP and Expiry to the user in the database
-    hospital.emailVerificationOTP = otp;
-    hospital.emailVerificationOTPExpiry = otpExpiry;
-    await hospital.save({ validateBeforeSave: false });
+    // Save OTP to Redis with a 15-minute (900 seconds) expiration
+    try {
+        await redisClient.setEx(`otp:hospital:${email}`, 900, otp.toString());
+    } catch (error) {
+        throw new ApiError(500, "Failed to process OTP request. Please try again.");
+    }
 
     // Send the email
     try {
@@ -378,17 +381,18 @@ const resetPassword = asyncHandler(async (req, res) => {
         throw new ApiError(404, "Hospital not found");
     }
 
-    if (hospital.emailVerificationOTP !== Number(otp)) {
+    // Verify OTP against Redis Cache
+    const cachedOtp = await redisClient.get(`otp:hospital:${email}`);
+    if (!cachedOtp) {
+        throw new ApiError(400, "OTP has expired or does not exist. Please request a new one.");
+    }
+    if (cachedOtp !== otp.toString()) {
         throw new ApiError(400, "Invalid OTP");
     }
 
-    if (hospital.emailVerificationOTPExpiry < Date.now()) {
-        throw new ApiError(400, "OTP has expired. Please request a new one.");
-    }
-
+    // Update password and clean up Redis
     hospital.password = newPassword;
-    hospital.emailVerificationOTP = undefined;
-    hospital.emailVerificationOTPExpiry = undefined;
+    await redisClient.del(`otp:hospital:${email}`);
 
     const { accessToken, refreshToken } = await generateAccessAndRefereshTokens(hospital._id);
 
@@ -498,12 +502,31 @@ export { updateHospitalDetails }
 
 const getHospitalLocations = asyncHandler(async (req, res) => {
 
+    try {
+        const cachedLocations = await redisClient.get("hospitals:locations");
+        if (cachedLocations) {
+            console.log(" Fetched locations from Redis Cache!");
+            return res.status(200).json(
+                new ApiResponse(200, "Hospital locations fetched successfully (Cached)", JSON.parse(cachedLocations))
+            );
+        }
+    } catch (error) {
+        console.error("Redis Cache Read Error:", error);
+    }
+
+    console.log("Fetching locations the slow way from MongoDB");
     const locations = await Hospital.distinct("city");
+
+    try {
+        await redisClient.setEx("hospitals:locations", 86400, JSON.stringify(locations));
+    } catch (error) {
+        console.error("Redis Cache Write Error:", error);
+    }
 
     return res.status(200).json(
         new ApiResponse(200, "Hospital locations fetched successfully", locations)
-    )
-})
+    );
+});
 
 export { getHospitalLocations }
 
