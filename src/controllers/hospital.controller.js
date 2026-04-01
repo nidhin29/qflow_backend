@@ -500,35 +500,103 @@ const updateHospitalDetails = asyncHandler(async (req, res) => {
 export { updateHospitalDetails }
 
 
-const getHospitalLocations = asyncHandler(async (req, res) => {
+const searchLocations = asyncHandler(async (req, res) => {
+    const { q, page = 1, limit = 10 } = req.query;
 
-    try {
-        const cachedLocations = await redisClient.get("hospitals:locations");
-        if (cachedLocations) {
-            console.log(" Fetched locations from Redis Cache!");
-            return res.status(200).json(
-                new ApiResponse(200, "Hospital locations fetched successfully (Cached)", JSON.parse(cachedLocations))
-            );
+    if (!q) {
+        throw new ApiError(400, "Location Search query is required");
+    }
+
+    // We use $group to make cities unique (Distinct), allowing us to paginate them!
+    const locationAggregateQuery = Hospital.aggregate([
+        {
+            $match: { city: { $regex: q, $options: "i" } }
+        },
+        {
+            $group: { _id: "$city" }
+        },
+        {
+            $sort: { _id: 1 } // Sort alphabetically
+        },
+        {
+            $project: { _id: 0, city: "$_id" }
         }
-    } catch (error) {
-        console.error("Redis Cache Read Error:", error);
-    }
+    ]);
 
-    console.log("Fetching locations the slow way from MongoDB");
-    const locations = await Hospital.distinct("city");
+    const options = {
+        page: parseInt(page, 10),
+        limit: parseInt(limit, 10)
+    };
 
-    try {
-        await redisClient.setEx("hospitals:locations", 86400, JSON.stringify(locations));
-    } catch (error) {
-        console.error("Redis Cache Write Error:", error);
-    }
+    const result = await Hospital.aggregatePaginate(locationAggregateQuery, options);
 
     return res.status(200).json(
-        new ApiResponse(200, "Hospital locations fetched successfully", locations)
+        new ApiResponse(200, "Locations fetched successfully", result)
     );
 });
 
-export { getHospitalLocations }
+export { searchLocations }
+
+const searchHospitals = asyncHandler(async (req, res) => {
+    const { q, filter, page = 1, limit = 10 } = req.query;
+
+    if (!q) {
+        throw new ApiError(400, "Search query is required");
+    }
+
+    const searchRegex = { $regex: q, $options: "i" };
+    let matchCondition = {};
+
+    if (filter === "place") {
+        matchCondition = {
+            $or: [
+                { city: searchRegex },
+                { district: searchRegex }
+            ]
+        };
+    } else if (filter === "department") {
+        matchCondition = { available_services: searchRegex };
+    } else if (filter === "hospital") {
+        matchCondition = { name: searchRegex };
+    } else {
+        // Universal Search (No specific filter selected)
+        matchCondition = {
+            $or: [
+                { name: searchRegex },
+                { city: searchRegex },
+                { district: searchRegex },
+                { available_services: searchRegex }
+            ]
+        };
+    }
+
+    const hospitalsAggregateQuery = Hospital.aggregate([
+        {
+            $match: matchCondition
+        },
+        {
+            $project: {
+                _id: 1,
+                name: 1,
+                city: 1,
+                district: 1,
+            }
+        }
+    ]);
+
+    const options = {
+        page: parseInt(page, 10),
+        limit: parseInt(limit, 10)
+    }
+
+    const result = await Hospital.aggregatePaginate(hospitalsAggregateQuery, options);
+
+    return res.status(200).json(
+        new ApiResponse(200, "Hospitals fetched successfully", result)
+    )
+})
+
+export { searchHospitals }
 
 
 const getHospitalsByLocation = asyncHandler(
@@ -544,6 +612,14 @@ const getHospitalsByLocation = asyncHandler(
             {
                 $match: {
                     city: location
+                }
+            },
+            {
+                $project: {
+                    _id: 1,
+                    name: 1,
+                    city: 1,
+                    available_services: 1
                 }
             }
         ]);
@@ -562,5 +638,31 @@ const getHospitalsByLocation = asyncHandler(
 )
 
 export { getHospitalsByLocation }
+
+
+const getHospitalById = asyncHandler(async (req, res) => {
+    const { hospital_id } = req.params;
+
+    if (!hospital_id) {
+        throw new ApiError(400, "Hospital ID is required");
+    }
+
+    const hospital = await Hospital.findById(hospital_id);
+
+    if (!hospital) {
+        throw new ApiError(404, "Hospital not found");
+    }
+
+    return res.status(200).json(
+        new ApiResponse(200, "Hospital details fetched successfully", hospital)
+    );
+});
+
+
+
+export { getHospitalById }
+
+
+
 
 

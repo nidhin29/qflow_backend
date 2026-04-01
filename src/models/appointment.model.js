@@ -20,11 +20,29 @@ const appointmentSchema = new Schema(
         appointment_time: {
             type: String,
             required: true
-        },      
+        },
+        token_number: {
+            type: Number,
+        },
+        department: {
+            type: String,
+            required: true
+        },
+        patient_name: {
+            type: String,
+            required: true
+        },
+        status: {
+            type: String,
+            enum: ["Pending", "Completed", "Cancelled"],
+            default: "Pending"
+        }
     },
     { timestamps: true }
 );
-
 appointmentSchema.plugin(mongooseAggregatePaginate);
+
+// Compound Unique Index: Prevents duplicate tokens for the exact same hospital on the exact same date
+appointmentSchema.index({ hospital_id: 1, appointment_date: 1, token_number: 1 }, { unique: true });
 
 export const Appointment = mongoose.model("Appointment", appointmentSchema);

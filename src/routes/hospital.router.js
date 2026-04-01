@@ -11,7 +11,11 @@ import {
     resetPassword,
     logoutHospital,
     getHospitalDetails,
-    updateHospitalDetails
+    updateHospitalDetails,
+    getHospitalById,
+    searchHospitals,
+    searchLocations,
+    getHospitalsByLocation
 } from "../controllers/hospital.controller.js"
 import { verifyJWT } from "../middlewares/auth.middleware.js"
 
@@ -29,5 +33,9 @@ router.route("/reset-password").post(resetPassword);
 router.route("/logout").post(verifyJWT, logoutHospital);
 router.route("/update-hospital-details").put(verifyJWT, updateHospitalDetails);
 router.route("/get-hospital-details").get(verifyJWT, getHospitalDetails);
+router.route("/get-hospital-by-id/:hospital_id").get(verifyJWT, getHospitalById);
+router.route("/search-hospitals").get(verifyJWT, searchHospitals);
+router.route("/search-locations").get(verifyJWT, searchLocations);
+router.route("/get-hospitals-by-location").get(verifyJWT, getHospitalsByLocation);
 
 export default router;
