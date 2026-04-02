@@ -59,6 +59,26 @@ const hospitalSchema = new Schema(
             type: Boolean,
             default: false
         },
+        average_consultation_time: {
+            type: Number,
+            default: 10
+        },
+        opening_time: {
+            type: String,
+            default: "09:00 AM"
+        },
+        closing_time: {
+            type: String,
+            default: "05:00 PM"
+        },
+        slot_duration: {
+            type: Number,
+            default: 60 
+        },
+        max_patients_per_slot: {
+            type: Number,
+            default: 4 
+        },
         refresh_token: {
             type: String
         },

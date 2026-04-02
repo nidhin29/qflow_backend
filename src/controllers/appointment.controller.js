@@ -2,18 +2,54 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 import { ApiError } from "../utils/ApiError.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import { Appointment } from "../models/appointment.model.js";
+import { Hospital } from "../models/hospital.model.js";
 import mongoose from "mongoose";
 import { redisClient } from "../db/redis.js";
 
+/**
+ * UTILITY HELPERS
+ */
+
+/**
+ * Merges a Date object and a Time String (e.g. "10:30 AM") into a single Date object.
+ * @param {Date|String} date - The base date
+ * @param {String} timeStr - The time string in "HH:MM AM/PM" format
+ * @returns {Date}
+ */
+const getApptDateObject = (date, timeStr) => {
+    try {
+        const [time, modifier] = timeStr.split(' ');
+        let [hours, minutes] = time.split(':');
+        hours = parseInt(hours, 10);
+        minutes = parseInt(minutes, 10);
+
+        if (modifier === 'PM' && hours < 12) hours += 12;
+        if (modifier === 'AM' && hours === 12) hours = 0;
+
+        const d = new Date(date);
+        d.setHours(hours, minutes, 0, 0);
+        return d;
+    } catch (e) {
+        return new Date(date);
+    }
+};
+
+/**
+ * PATIENT CONTROLLERS
+ */
+
+/**
+ * Fetches a paginated list of appointments for the logged-in user.
+ * Calculates real-time "Smart Wait" predictions for upcoming slots.
+ */
 const getUserAppointments = asyncHandler(async (req, res) => {
-    // 1. Extract page, limit, and the 'type' of appointments to fetch
     const { page = 1, limit = 10, type = "upcoming" } = req.query;
 
-    // 2. Build our dynamic matching condition based on the 'type' parameter
     const matchCondition = {
         patient_id: new mongoose.Types.ObjectId(req.user._id)
     };
 
+    // Filter by Date (Upcoming vs Past)
     if (type === "upcoming") {
         matchCondition.appointment_date = { $gte: new Date() };
     } else if (type === "past") {
@@ -22,17 +58,11 @@ const getUserAppointments = asyncHandler(async (req, res) => {
         throw new ApiError(400, "Invalid appointment type parameter. Must be 'upcoming' or 'past'.");
     }
 
-    // Sort upcoming from nearest to furthest, and past from most recent to oldest
     const sortOrder = type === "upcoming" ? 1 : -1;
 
-    // 3. Define the Aggregate pipeline query (do NOT await it, because we need to hand it to paginate)
     const aggregateQuery = Appointment.aggregate([
-        {
-            $match: matchCondition
-        },
-        {
-            $sort: { appointment_date: sortOrder }
-        },
+        { $match: matchCondition },
+        { $sort: { appointment_date: sortOrder } },
         {
             $lookup: {
                 from: "users",
@@ -41,12 +71,7 @@ const getUserAppointments = asyncHandler(async (req, res) => {
                 as: "userAppointmentDetails"
             }
         },
-        {
-            $unwind: {
-                path: "$userAppointmentDetails",
-                preserveNullAndEmptyArrays: true
-            }
-        },
+        { $unwind: { path: "$userAppointmentDetails", preserveNullAndEmptyArrays: true } },
         {
             $lookup: {
                 from: "hospitals",
@@ -55,12 +80,7 @@ const getUserAppointments = asyncHandler(async (req, res) => {
                 as: "hospitalDetails"
             }
         },
-        {
-            $unwind: {
-                path: "$hospitalDetails",
-                preserveNullAndEmptyArrays: true
-            }
-        },
+        { $unwind: { path: "$hospitalDetails", preserveNullAndEmptyArrays: true } },
         {
             $project: {
                 _id: 1,
@@ -69,103 +89,118 @@ const getUserAppointments = asyncHandler(async (req, res) => {
                 token_number: 1,
                 department: 1,
                 patient_name: 1,
-                // Only project safe fields from the Hospital document
+                status: 1,
                 "hospitalDetails._id": 1,
                 "hospitalDetails.name": 1,
                 "hospitalDetails.city": 1,
                 "hospitalDetails.district": 1,
-                // Only project safe fields from the User document
+                "hospitalDetails.average_consultation_time": 1,
                 "userAppointmentDetails.fullName": 1,
             }
         }
     ]);
 
-    const options = {
+    const result = await Appointment.aggregatePaginate(aggregateQuery, {
         page: parseInt(page, 10),
         limit: parseInt(limit, 10)
-    };
+    });
 
-    // 4. Pass the pipeline query into aggregatePaginate
-    const result = await Appointment.aggregatePaginate(aggregateQuery, options);
-
-    // 5. Automatically fetch live Redis queuing status ONLY for upcoming appointments!
+    // Enrich "Upcoming" appointments with live wait-time math
     if (type === "upcoming") {
-        const docsWithLiveQueue = await Promise.all(result.docs.map(async (appointment) => {
-            // Because of the $unwind stage above, hospitalDetails is no longer an array!
-            const hospital_id = appointment.hospitalDetails?._id;
-            if (!hospital_id) return appointment;
+        result.docs = await Promise.all(result.docs.map(async (appointment) => {
+            const hospital_id = appointment.hospitalDetails?._id || appointment.hospital_id;
+            const dateStr = new Date(appointment.appointment_date).toISOString().split('T')[0];
 
-            const dateString = new Date(appointment.appointment_date).toISOString().split("T")[0];
-            const servingQueueKey = `serving:hospital:${hospital_id}:date:${dateString}`;
+            // 1. Fetch current "Now Serving" from Redis
+            let servedNumber = 0;
+            try {
+                const servingValue = await redisClient.get(`queue:hosp:${hospital_id}:date:${dateStr}:serving`);
+                servedNumber = servingValue ? parseInt(servingValue, 10) : 0;
+            } catch (err) { }
 
-            // Get the Live TV Screen Ticket Number from Redis
-            const currently_serving = await redisClient.get(servingQueueKey);
-            const servedNumber = currently_serving ? parseInt(currently_serving, 10) : 0;
+            // 2. Count real "Pending" people ahead (Accuracy Fix: Skip Ghost Slots)
+            const patients_ahead = await Appointment.countDocuments({
+                hospital_id,
+                appointment_date: appointment.appointment_date,
+                status: "Pending",
+                token_number: { $lt: appointment.token_number }
+            });
 
-            // Calculate the math for the Patient's App UI! (e.g. 50 - 15 = 35)
-            const patients_ahead = Math.max(0, appointment.token_number - servedNumber);
+            // 3. Smart Wait Logic: Max of (BookedTime, QueueReadyTime)
+            const avgConsultTime = appointment.hospitalDetails?.average_consultation_time || 15;
+            const queueReadyTime = new Date(Date.now() + (patients_ahead * avgConsultTime * 60000));
+            const bookedTime = getApptDateObject(appointment.appointment_date, appointment.appointment_time);
+
+            const estServiceTime = new Date(Math.max(bookedTime.getTime(), queueReadyTime.getTime()));
 
             return {
                 ...appointment,
                 currently_serving: servedNumber,
-                patients_ahead
+                patients_ahead,
+                estimated_service_time: estServiceTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
             };
         }));
-
-        result.docs = docsWithLiveQueue;
     }
 
     return res.status(200).json(
-        new ApiResponse(200, `${type === 'upcoming' ? 'Upcoming' : 'Past'} appointments fetched successfully`, result)
+        new ApiResponse(200, `${type.toUpperCase()} appointments fetched successfully`, result)
     );
 });
 
-export { getUserAppointments }
-
+/**
+ * Books a new appointment using the "Slot-Aware Tokening" algorithm.
+ * Groups patients into buckets (e.g. 1 hour) to ensure chronological daily order.
+ */
 const bookAppointment = asyncHandler(async (req, res) => {
     const { hospital_id, appointment_date, appointment_time, department, patient_name } = req.body;
 
     if (!hospital_id || !appointment_date || !appointment_time || !department || !patient_name) {
-        throw new ApiError(400, "Hospital ID, Appointment Date, Time, Department, and Patient Name are required.");
+        throw new ApiError(400, "All fields are required.");
     }
 
-    // 1. Format the date to a simple String (YYYY-MM-DD) for the Redis Key
+    const hospital = await Hospital.findById(hospital_id);
+    if (!hospital) throw new ApiError(404, "Hospital not found");
+
     const dateObj = new Date(appointment_date);
-    const dateString = dateObj.toISOString().split("T")[0]; // e.g., "2024-03-31"
+    const dateStr = dateObj.toISOString().split("T")[0];
 
-    // 2. Generate the unique Redis Queue Key
-    const redisQueueKey = `queue:hospital:${hospital_id}:date:${dateString}`;
+    // STEP 1: Identify the Slot (Bucket)
+    const hospitalStartTime = getApptDateObject(appointment_date, hospital.opening_time || "09:00 AM");
+    const requestedTime = getApptDateObject(appointment_date, appointment_time);
 
+    const diffMins = Math.floor((requestedTime.getTime() - hospitalStartTime.getTime()) / 60000);
+    const slotIndex = Math.floor(diffMins / (hospital.slot_duration || 60));
+
+    if (slotIndex < 0) throw new ApiError(400, "Appointment time is before opening hours.");
+
+    // STEP 2: Atomic Token Assignment via Redis
+    const redisSlotKey = `queue:hosp:${hospital_id}:date:${dateStr}:slot:${slotIndex}`;
     let token_number;
 
-    // 3. Atomically get the next Token Number from Redis (Instantaneous!)
     try {
-        token_number = await redisClient.incr(redisQueueKey);
+        const sub_token = await redisClient.incr(redisSlotKey);
+        if (sub_token === 1) await redisClient.expire(redisSlotKey, 172800); // 48h expiry
 
-        // 4. Attach expiration timer to the very first token booked for that specific date
-        if (token_number === 1) {
-            const expireDate = new Date(appointment_date);
-            expireDate.setDate(expireDate.getDate() + 2); // Add 2 days
-            const expireUnixTimestamp = Math.floor(expireDate.getTime() / 1000);
-            await redisClient.expireAt(redisQueueKey, expireUnixTimestamp);
+        if (sub_token > (hospital.max_patients_per_slot || 4)) {
+            throw new ApiError(400, `The ${appointment_time} slot is fully booked.`);
         }
-    } catch (error) {
-        // GRACEFUL DEGRADATION: If Redis is completely down/crashes, DO NOT let the app crash!
-        // Fallback to manually counting the database to generate the token number
-        console.error("Redis failed to generate Queue Token. Falling back to MongoDB...");
-        const previousAppointments = await Appointment.countDocuments({
-            hospital_id,
-            appointment_date: dateObj
-        });
 
-        token_number = previousAppointments + 1;
+        // CRITICAL: Multiplication ensures Token 25 (10:00) doesn't clash with Token 25 (09:15)
+        // Global Token = (Previous Slots Full Capacity) + Current Slot Position
+        const maxPerSlot = hospital.max_patients_per_slot || 4;
+        token_number = (slotIndex * maxPerSlot) + sub_token;
+
+    } catch (error) {
+        if (error.statusCode) throw error;
+        // Fallback: DB Count approximation if Redis is down
+        const previousCount = await Appointment.countDocuments({ hospital_id, appointment_date: dateObj });
+        token_number = previousCount + 1;
     }
 
-    // 5. Save the Appointment to MongoDB permanently with a Retry Loop for Redis Desyncs
+    // STEP 3: MongoDB Persistence with Collision Retry
     let appointment;
-    let maxRetries = 2; // Try up to 2 times
-
-    while (maxRetries > 0) {
+    let maxRetries = 2;
+    while (maxRetries-- > 0) {
         try {
             appointment = await Appointment.create({
                 patient_id: req.user._id,
@@ -176,174 +211,144 @@ const bookAppointment = asyncHandler(async (req, res) => {
                 department,
                 patient_name
             });
-            break; // Success! Exit the loop
-        } catch (saveError) {
-            // Did we hit the Unique Constraint? (11000 = MongoDB Duplicate Key Error)
-            if (saveError.code === 11000) {
-                console.error(`Redis desync detected! Token ${token_number} already exists! Recovering...`);
-
-                // Ask Mongo for the true count
-                const trueCount = await Appointment.countDocuments({
-                    hospital_id,
-                    appointment_date: dateObj
-                });
-
-                // Force Redis to jump to the correct number so the NEXT loop iteration works
-                token_number = trueCount + 1;
-                await redisClient.set(redisQueueKey, token_number);
-
-                maxRetries--;
-            } else {
-                throw saveError; // Normal MongoDB error (e.g., validation failed)
-            }
+            break;
+        } catch (err) {
+            if (err.code === 11000) token_number++; // Quick bump if token exists
+            else throw err;
         }
     }
 
-    if (!appointment) {
-        throw new ApiError(500, "Failed to securely book appointment. The queue may be temporarily unstable. Please try again.");
-    }
+    if (!appointment) throw new ApiError(500, "Failed to secure appointment token.");
 
-    return res.status(201).json(
-        new ApiResponse(201, "Appointment booked successfully", appointment)
-    );
+    return res.status(201).json(new ApiResponse(201, "Appointment booked", appointment));
 });
 
-export { bookAppointment };
+/**
+ * HOSPITAL CONTROLLERS
+ */
 
-const getHospitalAppointments = asyncHandler(
-    async (req, res) => {
+/**
+ * Fetches dashboard data for the hospital, including real-time queue metrics.
+ */
+const getHospitalAppointments = asyncHandler(async (req, res) => {
+    const { page = 1, limit = 10, type = "upcoming" } = req.query;
 
-        const { page = 1, limit = 10, type = "upcoming" } = req.query;
+    const matchCondition = {
+        hospital_id: new mongoose.Types.ObjectId(req.user._id)
+    };
 
-        const matchCondition = {
-            hospital_id: new mongoose.Types.ObjectId(req.user._id)
-        }
+    if (type === "upcoming") {
+        matchCondition.appointment_date = { $gte: new Date() };
+    } else if (type === "past") {
+        matchCondition.appointment_date = { $lt: new Date() };
+    }
 
-        if (type === "upcoming") {
-            matchCondition.appointment_date = { $gte: new Date() };
-        } else if (type === "past") {
-            matchCondition.appointment_date = { $lt: new Date() };
-        } else {
-            throw new ApiError(400, "Invalid appointment type parameter. Must be 'upcoming' or 'past'.");
-        }
+    const sortOrder = type === "upcoming" ? 1 : -1;
 
-        const sortOrder = type === "upcoming" ? 1 : -1;
-
-
-        const aggregateQuery = Appointment.aggregate([
-            {
-                $match: matchCondition
-            },
-            {
-                $lookup: {
-                    from: "users",
-                    localField: "patient_id",
-                    foreignField: "_id",
-                    as: "patientDetails"
-                }
-            },
-            {
-                $unwind: {
-                    path: "$patientDetails",
-                    preserveNullAndEmptyArrays: true
-                }
-            },
-            {
-                $sort: { appointment_date: sortOrder }
-            },
-            {
-                $project: {
-                    _id: 1,
-                    appointment_date: 1,
-                    appointment_time: 1,
-                    token_number: 1,
-                    department: 1,
-                    patient_name: 1,
-                    createdAt: 1,
-                    // Only project safe fields from the Patient document
-                    "patientDetails._id": 1,
-                    "patientDetails.fullName": 1,
-                }
+    const aggregateQuery = Appointment.aggregate([
+        { $match: matchCondition },
+        {
+            $lookup: {
+                from: "users",
+                localField: "patient_id",
+                foreignField: "_id",
+                as: "patientDetails"
             }
-        ]);
-
-        const options = {
-            page: parseInt(page, 10),
-            limit: parseInt(limit, 10)
+        },
+        { $unwind: { path: "$patientDetails", preserveNullAndEmptyArrays: true } },
+        { $sort: { appointment_date: sortOrder, token_number: 1 } },
+        {
+            $project: {
+                _id: 1,
+                appointment_date: 1,
+                appointment_time: 1,
+                token_number: 1,
+                department: 1,
+                patient_name: 1,
+                status: 1,
+                "patientDetails.fullName": 1,
+                "patientDetails._id": 1
+            }
         }
+    ]);
 
-        const result = await Appointment.aggregatePaginate(aggregateQuery, options);
+    const result = await Appointment.aggregatePaginate(aggregateQuery, {
+        page: parseInt(page, 10),
+        limit: parseInt(limit, 10)
+    });
 
-        return res.status(200).json(
-            new ApiResponse(200, `${type === 'upcoming' ? 'Upcoming' : 'Past'} appointments fetched successfully`, result)
-        );
+    // Add Live Metrics to upcoming list
+    if (type === "upcoming") {
+        result.docs = await Promise.all(result.docs.map(async (appointment) => {
+            const dateStr = new Date(appointment.appointment_date).toISOString().split("T")[0];
+            const servingKey = `queue:hosp:${appointment.hospital_id}:date:${dateStr}:serving`;
+
+            let servedNumber = 0;
+            try {
+                const val = await redisClient.get(servingKey);
+                servedNumber = val ? parseInt(val, 10) : 0;
+            } catch (err) { }
+
+            const patients_ahead = await Appointment.countDocuments({
+                hospital_id: appointment.hospital_id,
+                appointment_date: appointment.appointment_date,
+                status: "Pending",
+                token_number: { $lt: appointment.token_number }
+            });
+
+            return { ...appointment, currently_serving: servedNumber, patients_ahead };
+        }));
     }
-)
-export { getHospitalAppointments };
 
+    return res.status(200).json(new ApiResponse(200, "Hospital appointments fetched", result));
+});
+
+/**
+ * Atomically advances the queue to the next pending patient.
+ * Broadcasts the update via WebSockets.
+ */
 const serveNextPatient = asyncHandler(async (req, res) => {
-    // The Hospital Admin clicks the "Call Next Patient" button
     const { appointment_date } = req.body;
-
-    if (!appointment_date) {
-        throw new ApiError(400, "Appointment Date is required to serve the queue.");
-    }
+    if (!appointment_date) throw new ApiError(400, "Date is required.");
 
     const hospital_id = req.user._id;
     const dateObj = new Date(appointment_date);
-    const dateString = dateObj.toISOString().split("T")[0];
+    const dateStr = dateObj.toISOString().split("T")[0];
 
-    const servingQueueKey = `serving:hospital:${hospital_id}:date:${dateString}`;
-
-    // 1. MONGODB IS THE SOURCE OF TRUTH (Graceful Degradation)
-    // Find the very next pending patient in the database, and instantly update them to Completed!
+    // 1. Mark next in line as "Completed"
     const nextAppointment = await Appointment.findOneAndUpdate(
         { hospital_id, appointment_date: dateObj, status: "Pending" },
         { status: "Completed" },
-        { sort: { token_number: 1 }, new: true } // Sort by token_number Ascending (1, 2, 3) to get the correct next person
+        { sort: { token_number: 1 }, new: true }
     );
 
-    if (!nextAppointment) {
-        throw new ApiError(404, "There are no pending patients left in the queue for this date.");
-    }
+    if (!nextAppointment) throw new ApiError(404, "No pending patients left.");
 
-    const currently_serving = nextAppointment.token_number;
+    const currentToken = nextAppointment.token_number;
 
-    // 2. REDIS SYNCHRONIZATION (Try/Catch Fallback)
+    // 2. Update Redis Cache
     try {
-        // Force Redis to perfectly match MongoDB's truth
-        await redisClient.set(servingQueueKey, currently_serving);
+        await redisClient.set(`queue:hosp:${hospital_id}:date:${dateStr}:serving`, currentToken);
+        await redisClient.expire(`queue:hosp:${hospital_id}:date:${dateStr}:serving`, 172800);
+    } catch (err) { }
 
-        if (currently_serving === 1) {
-            // Attach expiration timer for 48 hours to save server RAM, just like the booking queue
-            const expireDate = new Date(appointment_date);
-            expireDate.setDate(expireDate.getDate() + 2);
-            const expireUnixTimestamp = Math.floor(expireDate.getTime() / 1000);
-            await redisClient.expireAt(servingQueueKey, expireUnixTimestamp);
-        }
-    } catch (redisError) {
-        console.error("Redis Cache Failed! Gracefully falling back to MongoDB Source of Truth:", redisError);
-        // We DO NOT throw an error here. We silently swallow the Redis crash so the hospital app keeps working!
-    }
-
-    // 3. REAL-TIME BROADCAST TO WAITING PATIENTS
-    // Instantly yell the new Token Number down the open WebSocket pipeline!
+    // 3. Real-time broadcast
     const io = req.app.get("io");
     if (io) {
         io.to(`hospital_${hospital_id}`).emit("queueUpdate", {
-            appointment_date: dateString,
-            currently_serving: currently_serving
+            appointment_date: dateStr,
+            currently_serving: currentToken
         });
     }
 
-    return res.status(200).json(
-        new ApiResponse(200, "Successfully called the next patient", {
-            status: "Now Serving",
-            currently_serving: currently_serving
-        })
-    );
+    return res.status(200).json(new ApiResponse(200, "Next patient called", { currently_serving: currentToken }));
 });
 
-export { serveNextPatient };
+export {
+    getUserAppointments,
+    bookAppointment,
+    getHospitalAppointments,
+    serveNextPatient
+};
 
 

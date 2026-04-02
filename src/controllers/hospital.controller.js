@@ -216,11 +216,16 @@ const registerHospitalDetails = asyncHandler(async (req, res) => {
         district,
         receptionist_name,
         receptionist_contact_number,
-        available_services
+        available_services,
+        average_consultation_time
     } = req.body;
 
     if (!hospital) {
         throw new ApiError(404, "Hospital not found");
+    }
+
+    if (!city || !district || !receptionist_name || !receptionist_contact_number || !available_services) {
+        throw new ApiError(400, "All fields are required");
     }
 
     // Update fields
@@ -229,6 +234,7 @@ const registerHospitalDetails = asyncHandler(async (req, res) => {
     hospital.receptionist_name = receptionist_name;
     hospital.receptionist_contact_number = receptionist_contact_number;
     hospital.available_services = available_services;
+    hospital.average_consultation_time = average_consultation_time || 10;
 
     await hospital.save();
 
@@ -469,7 +475,7 @@ const getHospitalDetails = asyncHandler(async (req, res) => {
 export { getHospitalDetails }
 
 const updateHospitalDetails = asyncHandler(async (req, res) => {
-    const { city, district, receptionist_name, receptionist_contact_number, available_services } = req.body;
+    const { city, district, receptionist_name, receptionist_contact_number, available_services, average_consultation_time } = req.body;
 
     const updateFields = {};
     if (city) updateFields.city = city;
@@ -477,6 +483,7 @@ const updateHospitalDetails = asyncHandler(async (req, res) => {
     if (receptionist_name) updateFields.receptionist_name = receptionist_name;
     if (receptionist_contact_number) updateFields.receptionist_contact_number = receptionist_contact_number;
     if (available_services) updateFields.available_services = available_services;
+    if (average_consultation_time) updateFields.average_consultation_time = average_consultation_time;
 
     const updatedHospital = await Hospital.findByIdAndUpdate(
         req.user._id,
@@ -510,16 +517,31 @@ const searchLocations = asyncHandler(async (req, res) => {
     // We use $group to make cities unique (Distinct), allowing us to paginate them!
     const locationAggregateQuery = Hospital.aggregate([
         {
-            $match: { city: { $regex: q, $options: "i" } }
+            $match: {
+                $or: [
+                    { city: { $regex: q, $options: "i" } },
+                    { district: { $regex: q, $options: "i" } }
+                ]
+            }
         },
         {
-            $group: { _id: "$city" }
+            $group: {
+                _id: "$city",
+                district: { $first: "$district" }
+            }
         },
         {
-            $sort: { _id: 1 } // Sort alphabetically
+            $sort: {
+                _id: 1,
+                district: 1
+            }
         },
         {
-            $project: { _id: 0, city: "$_id" }
+            $project: {
+                _id: 0,
+                city: "$_id",
+                district: 1
+            }
         }
     ]);
 
@@ -601,7 +623,6 @@ export { searchHospitals }
 
 const getHospitalsByLocation = asyncHandler(
     async (req, res) => {
-        1
         const { page = 1, limit = 10, location } = req.query;
 
         if (!location) {
@@ -611,7 +632,10 @@ const getHospitalsByLocation = asyncHandler(
         const hospitalsAggregateQuery = Hospital.aggregate([
             {
                 $match: {
-                    city: location
+                    $or: [
+                        { city: { $regex: `^${location}$`, $options: "i" } },
+                        { district: { $regex: `^${location}$`, $options: "i" } }
+                    ]
                 }
             },
             {
@@ -619,6 +643,7 @@ const getHospitalsByLocation = asyncHandler(
                     _id: 1,
                     name: 1,
                     city: 1,
+                    district: 1,
                     available_services: 1
                 }
             }
@@ -647,7 +672,7 @@ const getHospitalById = asyncHandler(async (req, res) => {
         throw new ApiError(400, "Hospital ID is required");
     }
 
-    const hospital = await Hospital.findById(hospital_id);
+    const hospital = await Hospital.findById(hospital_id).select("-password -refresh_token -isEmailVerified -createdAt -updatedAt -__v");
 
     if (!hospital) {
         throw new ApiError(404, "Hospital not found");
