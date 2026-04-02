@@ -105,22 +105,24 @@ const getUserAppointments = asyncHandler(async (req, res) => {
         limit: parseInt(limit, 10)
     });
 
-    // Enrich "Upcoming" appointments with live wait-time math
+    // Enrich "Upcoming" appointments with live wait-time math (Dept-Specific)
     if (type === "upcoming") {
         result.docs = await Promise.all(result.docs.map(async (appointment) => {
             const hospital_id = appointment.hospitalDetails?._id || appointment.hospital_id;
             const dateStr = new Date(appointment.appointment_date).toISOString().split('T')[0];
+            const dept = appointment.department;
 
-            // 1. Fetch current "Now Serving" from Redis
+            // 1. Fetch current "Now Serving" for this DEPARTMENT
             let servedNumber = 0;
             try {
-                const servingValue = await redisClient.get(`queue:hosp:${hospital_id}:date:${dateStr}:serving`);
+                const servingValue = await redisClient.get(`queue:hosp:${hospital_id}:dept:${dept}:date:${dateStr}:serving`);
                 servedNumber = servingValue ? parseInt(servingValue, 10) : 0;
             } catch (err) { }
 
-            // 2. Count real "Pending" people ahead (Accuracy Fix: Skip Ghost Slots)
+            // 2. Count real "Pending" people ahead IN THIS DEPARTMENT
             const patients_ahead = await Appointment.countDocuments({
-                hospital_id,
+                hospital_id: hospital_id,
+                department: dept,
                 appointment_date: appointment.appointment_date,
                 status: "Pending",
                 token_number: { $lt: appointment.token_number }
@@ -173,8 +175,8 @@ const bookAppointment = asyncHandler(async (req, res) => {
 
     if (slotIndex < 0) throw new ApiError(400, "Appointment time is before opening hours.");
 
-    // STEP 2: Atomic Token Assignment via Redis
-    const redisSlotKey = `queue:hosp:${hospital_id}:date:${dateStr}:slot:${slotIndex}`;
+    // STEP 2: Atomic Token Assignment via Redis (Dept-Aware)
+    const redisSlotKey = `queue:hosp:${hospital_id}:dept:${department}:date:${dateStr}:slot:${slotIndex}`;
     let token_number;
 
     try {
@@ -182,10 +184,9 @@ const bookAppointment = asyncHandler(async (req, res) => {
         if (sub_token === 1) await redisClient.expire(redisSlotKey, 172800); // 48h expiry
 
         if (sub_token > (hospital.max_patients_per_slot || 4)) {
-            throw new ApiError(400, `The ${appointment_time} slot is fully booked.`);
+            throw new ApiError(400, `The ${appointment_time} slot for ${department} is fully booked.`);
         }
 
-        // CRITICAL: Multiplication ensures Token 25 (10:00) doesn't clash with Token 25 (09:15)
         // Global Token = (Previous Slots Full Capacity) + Current Slot Position
         const maxPerSlot = hospital.max_patients_per_slot || 4;
         token_number = (slotIndex * maxPerSlot) + sub_token;
@@ -193,7 +194,11 @@ const bookAppointment = asyncHandler(async (req, res) => {
     } catch (error) {
         if (error.statusCode) throw error;
         // Fallback: DB Count approximation if Redis is down
-        const previousCount = await Appointment.countDocuments({ hospital_id, appointment_date: dateObj });
+        const previousCount = await Appointment.countDocuments({
+            hospital_id,
+            department,
+            appointment_date: dateObj
+        });
         token_number = previousCount + 1;
     }
 
@@ -231,11 +236,15 @@ const bookAppointment = asyncHandler(async (req, res) => {
  * Fetches dashboard data for the hospital, including real-time queue metrics.
  */
 const getHospitalAppointments = asyncHandler(async (req, res) => {
-    const { page = 1, limit = 10, type = "upcoming" } = req.query;
+    const { page = 1, limit = 10, type = "upcoming", department } = req.query;
 
     const matchCondition = {
         hospital_id: new mongoose.Types.ObjectId(req.user._id)
     };
+
+    if (department) {
+        matchCondition.department = department;
+    }
 
     if (type === "upcoming") {
         matchCondition.appointment_date = { $gte: new Date() };
@@ -281,7 +290,8 @@ const getHospitalAppointments = asyncHandler(async (req, res) => {
     if (type === "upcoming") {
         result.docs = await Promise.all(result.docs.map(async (appointment) => {
             const dateStr = new Date(appointment.appointment_date).toISOString().split("T")[0];
-            const servingKey = `queue:hosp:${appointment.hospital_id}:date:${dateStr}:serving`;
+            const dept = appointment.department;
+            const servingKey = `queue:hosp:${appointment.hospital_id}:dept:${dept}:date:${dateStr}:serving`;
 
             let servedNumber = 0;
             try {
@@ -291,6 +301,7 @@ const getHospitalAppointments = asyncHandler(async (req, res) => {
 
             const patients_ahead = await Appointment.countDocuments({
                 hospital_id: appointment.hospital_id,
+                department: dept,
                 appointment_date: appointment.appointment_date,
                 status: "Pending",
                 token_number: { $lt: appointment.token_number }
@@ -308,28 +319,30 @@ const getHospitalAppointments = asyncHandler(async (req, res) => {
  * Broadcasts the update via WebSockets.
  */
 const serveNextPatient = asyncHandler(async (req, res) => {
-    const { appointment_date } = req.body;
-    if (!appointment_date) throw new ApiError(400, "Date is required.");
+    const { appointment_date, department } = req.body;
+    if (!appointment_date || !department) {
+        throw new ApiError(400, "Date and Department are required.");
+    }
 
     const hospital_id = req.user._id;
     const dateObj = new Date(appointment_date);
     const dateStr = dateObj.toISOString().split("T")[0];
 
-    // 1. Mark next in line as "Completed"
+    // 1. Mark next in line as "Completed" for this department
     const nextAppointment = await Appointment.findOneAndUpdate(
-        { hospital_id, appointment_date: dateObj, status: "Pending" },
+        { hospital_id, department, appointment_date: dateObj, status: "Pending" },
         { status: "Completed" },
         { sort: { token_number: 1 }, new: true }
     );
 
-    if (!nextAppointment) throw new ApiError(404, "No pending patients left.");
+    if (!nextAppointment) throw new ApiError(404, `No pending patients left in ${department}.`);
 
     const currentToken = nextAppointment.token_number;
 
-    // 2. Update Redis Cache
+    // 2. Update Redis Cache (Dept-Aware)
     try {
-        await redisClient.set(`queue:hosp:${hospital_id}:date:${dateStr}:serving`, currentToken);
-        await redisClient.expire(`queue:hosp:${hospital_id}:date:${dateStr}:serving`, 172800);
+        const servingKey = `queue:hosp:${hospital_id}:dept:${department}:date:${dateStr}:serving`;
+        await redisClient.set(servingKey, currentToken, { EX: 172800 });
     } catch (err) { }
 
     // 3. Real-time broadcast
@@ -337,11 +350,15 @@ const serveNextPatient = asyncHandler(async (req, res) => {
     if (io) {
         io.to(`hospital_${hospital_id}`).emit("queueUpdate", {
             appointment_date: dateStr,
+            department: department,
             currently_serving: currentToken
         });
     }
 
-    return res.status(200).json(new ApiResponse(200, "Next patient called", { currently_serving: currentToken }));
+    return res.status(200).json(new ApiResponse(200, `Next patient in ${department} called`, {
+        department,
+        currently_serving: currentToken
+    }));
 });
 
 export {

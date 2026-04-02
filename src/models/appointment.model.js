@@ -42,7 +42,7 @@ const appointmentSchema = new Schema(
 );
 appointmentSchema.plugin(mongooseAggregatePaginate);
 
-// Compound Unique Index: Prevents duplicate tokens for the exact same hospital on the exact same date
-appointmentSchema.index({ hospital_id: 1, appointment_date: 1, token_number: 1 }, { unique: true });
+// Compound Unique Index: Prevents duplicate tokens for the exact same hospital/department on the exact same date
+appointmentSchema.index({ hospital_id: 1, department: 1, appointment_date: 1, token_number: 1 }, { unique: true });
 
 export const Appointment = mongoose.model("Appointment", appointmentSchema);
