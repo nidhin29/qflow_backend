@@ -3,20 +3,25 @@ import { config } from "dotenv";
 
 config(); // Ensure our env vars are loaded
 
-const redisClient = createClient({
-    password: process.env.REDIS_PASSWORD,
+const redisOptions = {
     socket: {
         host: process.env.REDIS_HOST,
         port: process.env.REDIS_PORT
     }
-});
+};
+
+if (process.env.REDIS_PASSWORD && process.env.REDIS_PASSWORD.trim() !== "" && process.env.REDIS_PASSWORD !== '""') {
+    redisOptions.password = process.env.REDIS_PASSWORD;
+}
+
+const redisClient = createClient(redisOptions);
 
 redisClient.on("error", (err) => {
     console.error("Redis Client Error", err);
 });
 
 redisClient.on("connect", () => {
-    console.log("Connected to Redis Cloud successfully!");
+    console.log("Connected to Redis");
 });
 
 const connectRedis = async () => {

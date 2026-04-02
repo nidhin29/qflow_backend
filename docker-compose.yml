@@ -1,0 +1,32 @@
+services:
+  # The Qflow Backend Service
+  backend:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=""
+    depends_on:
+      - redis
+    develop:
+      watch:
+        - path: package.json
+          action: rebuild
+        - path: package-lock.json
+          action: rebuild
+        - path: ./src
+          action: sync
+          target: /app/src
+    volumes:
+      - .:/app
+      - /app/node_modules
+
+  # A local Redis service for development
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
