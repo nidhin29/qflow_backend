@@ -44,7 +44,7 @@ const addMember = asyncHandler(async (req, res) => {
     }
 
     return res.status(201).json(
-        new ApiResponse(201, "Member added successfully", newMember)
+        new ApiResponse(201, "Member added successfully")
     );
 });
 
@@ -71,7 +71,15 @@ const getMembers = asyncHandler(async (req, res) => {
         {
             // Step 3: Only send back the data we actually need for security
             $project: {
-                familyMembers: 1,
+                _id: 0,
+                "familyMembers._id": 1,
+                "familyMembers.name": 1,
+                "familyMembers.age": 1,
+                "familyMembers.gender": 1,
+                "familyMembers.weight": 1,
+                "familyMembers.height": 1,
+                "familyMembers.relation": 1,
+                "familyMembers.blood_group": 1
             }
         }
     ]);
@@ -82,7 +90,7 @@ const getMembers = asyncHandler(async (req, res) => {
 
     // `userWithMembers` is an array of size 1, so we return the first element
     return res.status(200).json(
-        new ApiResponse(200, "Members fetched successfully", userWithMembers[0])
+        new ApiResponse(200, "Members fetched successfully", userWithMembers[0].familyMembers)
     );
 });
 
@@ -153,7 +161,7 @@ const updateMember = asyncHandler(
         }
 
         return res.status(200).json(
-            new ApiResponse(200, "Member updated successfully", { member: updatedMember })
+            new ApiResponse(200, "Member updated successfully")
         );
     }
 )

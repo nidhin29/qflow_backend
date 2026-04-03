@@ -52,7 +52,7 @@ const registerUser = asyncHandler(async (req, res) => {
         username: generatedUsername,
     })
 
-    const createdUser = await User.findById(user._id).select("email _id")
+    const createdUser = await User.findById(user._id).select("email")
 
     if (!createdUser) {
         throw new ApiError(500, "Something went wrong while registering the user");

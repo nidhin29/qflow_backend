@@ -50,10 +50,13 @@ const getUserAppointments = asyncHandler(async (req, res) => {
     };
 
     // Filter by Date (Upcoming vs Past)
+    const startOfToday = new Date();
+    startOfToday.setUTCHours(0, 0, 0, 0); // Normalize to 'Today' baseline
+
     if (type === "upcoming") {
-        matchCondition.appointment_date = { $gte: new Date() };
+        matchCondition.appointment_date = { $gte: startOfToday };
     } else if (type === "past") {
-        matchCondition.appointment_date = { $lt: new Date() };
+        matchCondition.appointment_date = { $lt: startOfToday };
     } else {
         throw new ApiError(400, "Invalid appointment type parameter. Must be 'upcoming' or 'past'.");
     }
@@ -128,12 +131,17 @@ const getUserAppointments = asyncHandler(async (req, res) => {
                 token_number: { $lt: appointment.token_number }
             });
 
-            // 3. Smart Wait Logic: Max of (BookedTime, QueueReadyTime)
+            // 3. Smart Wait Logic: (Now/Slot + Wait Time)
             const avgConsultTime = appointment.hospitalDetails?.average_consultation_time || 15;
-            const queueReadyTime = new Date(Date.now() + (patients_ahead * avgConsultTime * 60000));
             const bookedTime = getApptDateObject(appointment.appointment_date, appointment.appointment_time);
 
-            const estServiceTime = new Date(Math.max(bookedTime.getTime(), queueReadyTime.getTime()));
+            const isToday = new Date(appointment.appointment_date).toDateString() === new Date().toDateString();
+            const now = Date.now();
+            
+            // Logic: You can't be served before your slot, but you might be served late if the queue is long.
+            const baseStartTime = isToday ? Math.max(bookedTime.getTime(), now) : bookedTime.getTime();
+            
+            const estServiceTime = new Date(baseStartTime + (patients_ahead * avgConsultTime * 60000));
 
             return {
                 ...appointment,
@@ -163,7 +171,13 @@ const bookAppointment = asyncHandler(async (req, res) => {
     const hospital = await Hospital.findById(hospital_id);
     if (!hospital) throw new ApiError(404, "Hospital not found");
 
+    // NEW: Validate that the department exists in the hospital's list
+    if (!hospital.available_services || !hospital.available_services.includes(department)) {
+        throw new ApiError(400, `The department '${department}' is not available at this hospital.`);
+    }
+
     const dateObj = new Date(appointment_date);
+    dateObj.setUTCHours(0, 0, 0, 0); // Normalize to Midnight for consistent indexing
     const dateStr = dateObj.toISOString().split("T")[0];
 
     // STEP 1: Identify the Slot (Bucket)
@@ -178,9 +192,12 @@ const bookAppointment = asyncHandler(async (req, res) => {
     // STEP 2: Atomic Token Assignment via Redis (Dept-Aware)
     const redisSlotKey = `queue:hosp:${hospital_id}:dept:${department}:date:${dateStr}:slot:${slotIndex}`;
     let token_number;
+    let sub_token = 0;
+    let usedRedis = false;
 
     try {
-        const sub_token = await redisClient.incr(redisSlotKey);
+        sub_token = await redisClient.incr(redisSlotKey);
+        usedRedis = true;
         if (sub_token === 1) await redisClient.expire(redisSlotKey, 172800); // 48h expiry
 
         if (sub_token > (hospital.max_patients_per_slot || 4)) {
@@ -192,6 +209,7 @@ const bookAppointment = asyncHandler(async (req, res) => {
         token_number = (slotIndex * maxPerSlot) + sub_token;
 
     } catch (error) {
+        console.log("Redis Error:", error);
         if (error.statusCode) throw error;
         // Fallback: DB Count approximation if Redis is down
         const previousCount = await Appointment.countDocuments({
@@ -204,7 +222,7 @@ const bookAppointment = asyncHandler(async (req, res) => {
 
     // STEP 3: MongoDB Persistence with Collision Retry
     let appointment;
-    let maxRetries = 2;
+    let maxRetries = 10; // High limit to find a "hole" in the sequence if needed
     while (maxRetries-- > 0) {
         try {
             appointment = await Appointment.create({
@@ -218,14 +236,24 @@ const bookAppointment = asyncHandler(async (req, res) => {
             });
             break;
         } catch (err) {
-            if (err.code === 11000) token_number++; // Quick bump if token exists
-            else throw err;
+            console.error("Appointment DB Create Error:", err.code, err.message);
+            if (err.code === 11000) {
+                token_number++; // Quick bump if token exists
+            } else {
+                throw err;
+            }
         }
     }
 
-    if (!appointment) throw new ApiError(500, "Failed to secure appointment token.");
+    if (!appointment) {
+        // REVERT Redis if DB failed so we don't skip a token permanently
+        if (usedRedis && sub_token > 0) {
+            await redisClient.decr(redisSlotKey);
+        }
+        throw new ApiError(500, "Failed to secure appointment token after multiple attempts.");
+    }
 
-    return res.status(201).json(new ApiResponse(201, "Appointment booked", appointment));
+    return res.status(201).json(new ApiResponse(201, "Appointment booked"));
 });
 
 /**
