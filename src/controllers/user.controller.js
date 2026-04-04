@@ -6,6 +6,7 @@ import { OAuth2Client } from "google-auth-library";
 import { sendEmail } from "../utils/sendEmail.js";
 import jwt from "jsonwebtoken";
 import { redisClient } from "../db/redis.js";
+import { uploadFileToS3 } from "../utils/s3.js";
 
 const generateAccessAndRefereshTokens = async (userId) => {
     try {
@@ -354,6 +355,11 @@ const registerUserDetails = asyncHandler(async (req, res) => {
     user.blood_group = blood_group;
     user.contact_number = contact_number;
 
+    if (req.file) {
+        const imageUrl = await uploadFileToS3(req.file.buffer, req.file.originalname, 'users/profiles', req.file.mimetype);
+        user.profile_image = imageUrl;
+    }
+
     await user.save();
 
     return res.status(200)
@@ -547,6 +553,11 @@ const updateUserDetails = asyncHandler(async (req, res) => {
     if (blood_group) updateFields.blood_group = blood_group;
     if (contact_number) updateFields.contact_number = contact_number;
 
+    if (req.file) {
+        const imageUrl = await uploadFileToS3(req.file.buffer, req.file.originalname, 'users/profiles', req.file.mimetype);
+        updateFields.profile_image = imageUrl;
+    }
+
     const updatedUser = await User.findByIdAndUpdate(
         req.user._id,
         {
@@ -587,7 +598,8 @@ const getUserDetails = asyncHandler(async (req, res) => {
                 height: user.height,
                 gender: user.gender,
                 blood_group: user.blood_group,
-                contact_number: user.contact_number
+                contact_number: user.contact_number,
+                profile_image: user.profile_image
             }
         })
     );

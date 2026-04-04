@@ -6,6 +6,8 @@ import { OAuth2Client } from "google-auth-library";
 import { sendEmail } from "../utils/sendEmail.js";
 import jwt from "jsonwebtoken";
 import { redisClient } from "../db/redis.js";
+import { uploadFileToS3 } from "../utils/s3.js";
+
 const generateAccessAndRefereshTokens = async (hospitalId) => {
     try {
         const hospital = await Hospital.findById(hospitalId)
@@ -231,6 +233,12 @@ const registerHospitalDetails = asyncHandler(async (req, res) => {
     // Update fields
     hospital.city = city;
     hospital.district = district;
+
+    if (req.file) {
+        const imageUrl = await uploadFileToS3(req.file.buffer, req.file.originalname, 'hospitals/logos', req.file.mimetype);
+        hospital.profile_image = imageUrl;
+    }
+
     hospital.receptionist_name = receptionist_name;
     hospital.receptionist_contact_number = receptionist_contact_number;
     hospital.available_services = available_services;
@@ -466,7 +474,8 @@ const getHospitalDetails = asyncHandler(async (req, res) => {
                 district: hospital.district,
                 receptionist_name: hospital.receptionist_name,
                 receptionist_contact_number: hospital.receptionist_contact_number,
-                available_services: hospital.available_services
+                available_services: hospital.available_services,
+                profile_image: hospital.profile_image
             }
         })
     );
@@ -484,6 +493,11 @@ const updateHospitalDetails = asyncHandler(async (req, res) => {
     if (receptionist_contact_number) updateFields.receptionist_contact_number = receptionist_contact_number;
     if (available_services) updateFields.available_services = available_services;
     if (average_consultation_time) updateFields.average_consultation_time = average_consultation_time;
+
+    if (req.file) {
+        const imageUrl = await uploadFileToS3(req.file.buffer, req.file.originalname, 'hospitals/logos', req.file.mimetype);
+        updateFields.profile_image = imageUrl;
+    }
 
     const updatedHospital = await Hospital.findByIdAndUpdate(
         req.user._id,
