@@ -35,6 +35,9 @@ const hospitalSchema = new Schema(
         profile_image: {
             type: String,
         },
+        thumbnail_url: {
+            type: String,
+        },
         receptionist_name: {
             type: String,
         },
@@ -73,11 +76,11 @@ const hospitalSchema = new Schema(
         },
         slot_duration: {
             type: Number,
-            default: 60 
+            default: 60
         },
         max_patients_per_slot: {
             type: Number,
-            default: 4 
+            default: 4
         },
         refresh_token: {
             type: String
@@ -91,9 +94,9 @@ const hospitalSchema = new Schema(
 );
 
 hospitalSchema.pre("save", async function (next) {
-    if (!this.isModified("password")) return; 
+    if (!this.isModified("password")) return;
     this.password = await bcrypt.hash(this.password, 10);
-    
+
 });
 
 hospitalSchema.methods.isPasswordCorrect = async function (password) {

@@ -6,7 +6,7 @@ import { OAuth2Client } from "google-auth-library";
 import { sendEmail } from "../utils/sendEmail.js";
 import jwt from "jsonwebtoken";
 import { redisClient } from "../db/redis.js";
-import { uploadFileToS3 } from "../utils/s3.js";
+import {  uploadImageWithThumbnailToS3, deleteFileFromS3 } from "../utils/s3.js";
 
 const generateAccessAndRefereshTokens = async (hospitalId) => {
     try {
@@ -235,13 +235,19 @@ const registerHospitalDetails = asyncHandler(async (req, res) => {
     hospital.district = district;
 
     if (req.file) {
-        const imageUrl = await uploadFileToS3(req.file.buffer, req.file.originalname, 'hospitals/logos', req.file.mimetype);
+        const { imageUrl, thumbnailUrl } = await uploadImageWithThumbnailToS3(
+            req.file.buffer,
+            req.file.originalname,
+            "hospitals/logos",
+            req.file.mimetype
+        );
         hospital.profile_image = imageUrl;
+        hospital.thumbnail_url = thumbnailUrl;
     }
 
     hospital.receptionist_name = receptionist_name;
     hospital.receptionist_contact_number = receptionist_contact_number;
-    hospital.available_services = available_services;
+    hospital.available_services = JSON.parse(available_services);
     hospital.average_consultation_time = average_consultation_time || 10;
 
     await hospital.save();
@@ -475,7 +481,8 @@ const getHospitalDetails = asyncHandler(async (req, res) => {
                 receptionist_name: hospital.receptionist_name,
                 receptionist_contact_number: hospital.receptionist_contact_number,
                 available_services: hospital.available_services,
-                profile_image: hospital.profile_image
+                profile_image: hospital.profile_image,
+                thumbnail_url: hospital.thumbnail_url
             }
         })
     );
@@ -495,8 +502,24 @@ const updateHospitalDetails = asyncHandler(async (req, res) => {
     if (average_consultation_time) updateFields.average_consultation_time = average_consultation_time;
 
     if (req.file) {
-        const imageUrl = await uploadFileToS3(req.file.buffer, req.file.originalname, 'hospitals/logos', req.file.mimetype);
+        // 1. Fetch current hospital to get old URLs for deletion
+        const currentHospital = await Hospital.findById(req.user._id);
+        if (currentHospital.profile_image) {
+            await deleteFileFromS3(currentHospital.profile_image);
+        }
+        if (currentHospital.thumbnail_url) {
+            await deleteFileFromS3(currentHospital.thumbnail_url);
+        }
+
+        // 2. Upload new images to generic folder
+        const { imageUrl, thumbnailUrl } = await uploadImageWithThumbnailToS3(
+            req.file.buffer,
+            req.file.originalname,
+            "hospitals/logos",
+            req.file.mimetype
+        );
         updateFields.profile_image = imageUrl;
+        updateFields.thumbnail_url = thumbnailUrl;
     }
 
     const updatedHospital = await Hospital.findByIdAndUpdate(
@@ -505,7 +528,7 @@ const updateHospitalDetails = asyncHandler(async (req, res) => {
             $set: updateFields
         },
         {
-            returnDocument: 'after'
+            new: true
         }
     );
 
@@ -616,6 +639,8 @@ const searchHospitals = asyncHandler(async (req, res) => {
                 name: 1,
                 city: 1,
                 district: 1,
+                profile_image: 1,
+                thumbnail_url: 1
             }
         }
     ]);
@@ -635,46 +660,46 @@ const searchHospitals = asyncHandler(async (req, res) => {
 export { searchHospitals }
 
 
-const getHospitalsByLocation = asyncHandler(
-    async (req, res) => {
-        const { page = 1, limit = 10, location } = req.query;
+const getHospitalsByLocation = asyncHandler(async (req, res) => {
+    const { page = 1, limit = 10, location } = req.query;
 
-        if (!location) {
-            throw new ApiError(400, "Location parameter is required");
-        }
-
-        const hospitalsAggregateQuery = Hospital.aggregate([
-            {
-                $match: {
-                    $or: [
-                        { city: { $regex: `^${location}$`, $options: "i" } },
-                        { district: { $regex: `^${location}$`, $options: "i" } }
-                    ]
-                }
-            },
-            {
-                $project: {
-                    _id: 1,
-                    name: 1,
-                    city: 1,
-                    district: 1,
-                    available_services: 1
-                }
-            }
-        ]);
-
-        const options = {
-            page: parseInt(page, 10),
-            limit: parseInt(limit, 10)
-        }
-
-        const result = await Hospital.aggregatePaginate(hospitalsAggregateQuery, options);
-
-        return res.status(200).json(
-            new ApiResponse(200, "Hospitals fetched successfully", result)
-        )
+    if (!location) {
+        throw new ApiError(400, "Location parameter is required");
     }
-)
+
+    const hospitalsAggregateQuery = Hospital.aggregate([
+        {
+            $match: {
+                $or: [
+                    { city: { $regex: `^${location}$`, $options: "i" } },
+                    { district: { $regex: `^${location}$`, $options: "i" } }
+                ]
+            }
+        },
+        {
+            $project: {
+                _id: 1,
+                name: 1,
+                city: 1,
+                district: 1,
+                available_services: 1,
+                profile_image: 1,
+                thumbnail_url: 1
+            }
+        }
+    ]);
+
+    const options = {
+        page: parseInt(page, 10),
+        limit: parseInt(limit, 10)
+    };
+
+    const result = await Hospital.aggregatePaginate(hospitalsAggregateQuery, options);
+
+    return res.status(200).json(
+        new ApiResponse(200, "Hospitals fetched successfully", result)
+    );
+});
 
 export { getHospitalsByLocation }
 
@@ -696,8 +721,6 @@ const getHospitalById = asyncHandler(async (req, res) => {
         new ApiResponse(200, "Hospital details fetched successfully", hospital)
     );
 });
-
-
 
 export { getHospitalById }
 

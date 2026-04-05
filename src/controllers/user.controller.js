@@ -6,7 +6,7 @@ import { OAuth2Client } from "google-auth-library";
 import { sendEmail } from "../utils/sendEmail.js";
 import jwt from "jsonwebtoken";
 import { redisClient } from "../db/redis.js";
-import { uploadFileToS3 } from "../utils/s3.js";
+import { uploadImageWithThumbnailToS3, deleteFileFromS3 } from "../utils/s3.js";
 
 const generateAccessAndRefereshTokens = async (userId) => {
     try {
@@ -356,8 +356,14 @@ const registerUserDetails = asyncHandler(async (req, res) => {
     user.contact_number = contact_number;
 
     if (req.file) {
-        const imageUrl = await uploadFileToS3(req.file.buffer, req.file.originalname, 'users/profiles', req.file.mimetype);
+        const { imageUrl, thumbnailUrl } = await uploadImageWithThumbnailToS3(
+            req.file.buffer,
+            req.file.originalname,
+            "users/profiles",
+            req.file.mimetype
+        );
         user.profile_image = imageUrl;
+        user.thumbnail_url = thumbnailUrl;
     }
 
     await user.save();
@@ -554,8 +560,24 @@ const updateUserDetails = asyncHandler(async (req, res) => {
     if (contact_number) updateFields.contact_number = contact_number;
 
     if (req.file) {
-        const imageUrl = await uploadFileToS3(req.file.buffer, req.file.originalname, 'users/profiles', req.file.mimetype);
+        // 1. Fetch current user to get old image URLs for deletion
+        const currentUser = await User.findById(req.user._id);
+        if (currentUser.profile_image) {
+            await deleteFileFromS3(currentUser.profile_image);
+        }
+        if (currentUser.thumbnail_url) {
+            await deleteFileFromS3(currentUser.thumbnail_url);
+        }
+
+        // 2. Upload new images to generic folder
+        const { imageUrl, thumbnailUrl } = await uploadImageWithThumbnailToS3(
+            req.file.buffer,
+            req.file.originalname,
+            "users/profiles",
+            req.file.mimetype
+        );
         updateFields.profile_image = imageUrl;
+        updateFields.thumbnail_url = thumbnailUrl;
     }
 
     const updatedUser = await User.findByIdAndUpdate(
@@ -599,7 +621,8 @@ const getUserDetails = asyncHandler(async (req, res) => {
                 gender: user.gender,
                 blood_group: user.blood_group,
                 contact_number: user.contact_number,
-                profile_image: user.profile_image
+                profile_image: user.profile_image,
+                thumbnail_url: user.thumbnail_url
             }
         })
     );

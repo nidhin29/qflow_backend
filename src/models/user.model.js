@@ -49,6 +49,9 @@ const userSchema = new Schema(
         profile_image: {
             type: String
         },
+        thumbnail_url: {
+            type: String
+        },
         appointments: {
             type: [Schema.Types.ObjectId],
             ref: "Appointment"
