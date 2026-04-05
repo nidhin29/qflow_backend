@@ -6,7 +6,7 @@ import { OAuth2Client } from "google-auth-library";
 import { sendEmail } from "../utils/sendEmail.js";
 import jwt from "jsonwebtoken";
 import { redisClient } from "../db/redis.js";
-import {  uploadImageWithThumbnailToS3, deleteFileFromS3 } from "../utils/s3.js";
+import { uploadImageWithThumbnailToS3, deleteFileFromS3 } from "../utils/s3.js";
 
 const generateAccessAndRefereshTokens = async (hospitalId) => {
     try {
@@ -44,22 +44,27 @@ const registerHospital = asyncHandler(async (req, res) => {
 
     const generatedUsername = email.split("@")[0] + Math.floor(Math.random() * 1000);
 
-    const hospital = await Hospital.create({
+    // Store registration data in Redis with 15-minute TTL
+    const registrationData = {
         email,
         password,
         name,
         username: generatedUsername,
-    })
+    };
 
-    const createdHospital = await Hospital.findById(hospital._id).select("email _id name")
-
-    if (!createdHospital) {
-        throw new ApiError(500, "Something went wrong while registering the hospital");
+    try {
+        await redisClient.setEx(
+            `signup:hospital:data:${email}`,
+            900,
+            JSON.stringify(registrationData)
+        );
+    } catch (error) {
+        throw new ApiError(500, "Failed to initialize registration. Please try again.");
     }
 
-    return res.status(201)
+    return res.status(200)
         .json(
-            new ApiResponse(201, "Hospital registered. Please proceed with OTP verification", createdHospital)
+            new ApiResponse(200, "Hospital registration initiated. Please verify the OTP sent to your email.", { email })
         )
 })
 
@@ -70,12 +75,6 @@ const sendOtp = asyncHandler(async (req, res) => {
 
     if (!email) {
         throw new ApiError(400, "Hospital email is required");
-    }
-
-    const hospital = await Hospital.findOne({ email });
-
-    if (!hospital) {
-        throw new ApiError(404, "Hospital not found");
     }
 
     const otp = Math.floor(100000 + Math.random() * 900000);
@@ -89,9 +88,9 @@ const sendOtp = asyncHandler(async (req, res) => {
 
     try {
         await sendEmail({
-            email: hospital.email,
+            email: email,
             subject: "Your Hospital Verification OTP",
-            message: `Your verification code for Qflow Hospital account is ${otp}.`
+            message: `Your verification code for Qflow Hospital account is ${otp}. It will expire in 15 minutes.`
         });
     } catch (error) {
         throw new ApiError(500, "Something went wrong while sending the email. Please try again.");
@@ -111,12 +110,6 @@ const verifyOtp = asyncHandler(async (req, res) => {
         throw new ApiError(400, "Hospital email and OTP are required");
     }
 
-    const hospital = await Hospital.findOne({ email });
-
-    if (!hospital) {
-        throw new ApiError(404, "Hospital not found");
-    }
-
     // Verify OTP against Redis Cache
     const cachedOtp = await redisClient.get(`otp:hospital:${email}`);
     if (!cachedOtp) {
@@ -126,10 +119,29 @@ const verifyOtp = asyncHandler(async (req, res) => {
         throw new ApiError(400, "Invalid OTP");
     }
 
-    // OTP is valid, verify the hospital and clean up Redis
-    hospital.isEmailVerified = true;
-    await hospital.save({ validateBeforeSave: false });
-    await redisClient.del(`otp:hospital:${email}`);
+    let hospital = await Hospital.findOne({ email });
+
+    if (!hospital) {
+        // Check for pending registration
+        const pendingHospitalData = await redisClient.get(`signup:hospital:data:${email}`);
+        if (!pendingHospitalData) {
+            throw new ApiError(400, "Registration session expired. Please register again.");
+        }
+
+        const { password, name, username } = JSON.parse(pendingHospitalData);
+
+        // Create the hospital in MongoDB
+        hospital = await Hospital.create({
+            email: email,
+            password,
+            name,
+            username,
+            isEmailVerified: true
+        });
+
+        // Clean up pending registration data
+        await redisClient.del(`signup:hospital:data:${email}`);
+    }
 
     const { accessToken, refreshToken } = await generateAccessAndRefereshTokens(hospital._id);
 
@@ -139,6 +151,7 @@ const verifyOtp = asyncHandler(async (req, res) => {
         .json(
             new ApiResponse(200, "Hospital email verified successfully!", {
                 hospital: {
+                    _id: hospital._id,
                     email: hospital.email,
                     name: hospital.name,
                     isEmailVerified: hospital.isEmailVerified
@@ -481,6 +494,7 @@ const getHospitalDetails = asyncHandler(async (req, res) => {
                 receptionist_name: hospital.receptionist_name,
                 receptionist_contact_number: hospital.receptionist_contact_number,
                 available_services: hospital.available_services,
+                average_consultation_time: hospital.average_consultation_time,
                 profile_image: hospital.profile_image,
                 thumbnail_url: hospital.thumbnail_url
             }

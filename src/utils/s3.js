@@ -66,7 +66,11 @@ export const uploadImageWithThumbnailToS3 = async (fileBuffer, fileName, folder,
         // 3. Execute concurrently
         await Promise.all([uploadOriginal, uploadThumbnail]);
 
-        const baseUrl = `https://${process.env.AWS_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com`;
+        // 4. Generate Public URLs (Priority: CloudFront > S3 Direct)
+        const cloudFrontDomain = process.env.CLOUDFRONT_URL;
+        const s3BaseUrl = `https://${process.env.AWS_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com`;
+
+        const baseUrl = cloudFrontDomain ? `https://${cloudFrontDomain}` : s3BaseUrl;
 
         return {
             imageUrl: `${baseUrl}/${originalKey}`,

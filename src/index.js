@@ -42,6 +42,7 @@ io.on("connection", (socket) => {
 
 Promise.all([connectDB(), connectRedis()])
     .then(() => {
+        
         // IMPORTANT: Use httpServer.listen instead of app.listen!
         httpServer.listen(process.env.PORT || 8000, () => {
             console.log(`Server is running on port ${process.env.PORT}`);

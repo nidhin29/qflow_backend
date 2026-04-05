@@ -32,7 +32,6 @@ const options = {
 
 
 const registerUser = asyncHandler(async (req, res) => {
-
     const { email, password } = req.body;
 
     if (!email || !password) {
@@ -47,23 +46,28 @@ const registerUser = asyncHandler(async (req, res) => {
 
     const generatedUsername = email.split("@")[0] + Math.floor(Math.random() * 1000);
 
-    const user = await User.create({
+    // Store registration data in Redis with 15-minute TTL
+    const registrationData = {
         email,
         password,
         username: generatedUsername,
-    })
+    };
 
-    const createdUser = await User.findById(user._id).select("email")
-
-    if (!createdUser) {
-        throw new ApiError(500, "Something went wrong while registering the user");
+    try {
+        await redisClient.setEx(
+            `signup:data:${email}`,
+            900,
+            JSON.stringify(registrationData)
+        );
+    } catch (error) {
+        throw new ApiError(500, "Failed to initialize registration. Please try again.");
     }
 
-    return res.status(201)
-        .json(
-            new ApiResponse(201, "User registered. Please proceed with OTP verification", createdUser)
-        )
 
+    return res.status(200)
+        .json(
+            new ApiResponse(200, "Registration initiated. Please verify the OTP sent to your email.", { email })
+        )
 })
 
 export { registerUser }
@@ -73,13 +77,7 @@ const sendOtp = asyncHandler(async (req, res) => {
     const { email } = req.body;
 
     if (!email) {
-        throw new ApiError(400, "User ID is required");
-    }
-
-    const user = await User.findOne({ email });
-
-    if (!user) {
-        throw new ApiError(404, "User not found");
+        throw new ApiError(400, "Email is required");
     }
 
     // Generate 6-digit OTP
@@ -95,7 +93,7 @@ const sendOtp = asyncHandler(async (req, res) => {
     // Send the email
     try {
         await sendEmail({
-            email: user.email,
+            email: email,
             subject: "Your Qflow Verification OTP",
             message: `Your verification code is ${otp}. It will expire in 15 minutes.`
         });
@@ -118,12 +116,6 @@ const verifyOtp = asyncHandler(async (req, res) => {
         throw new ApiError(400, "Email and OTP are required");
     }
 
-    const user = await User.findOne({ email });
-
-    if (!user) {
-        throw new ApiError(404, "User not found");
-    }
-
     // Verify OTP against Redis Cache
     const cachedOtp = await redisClient.get(`otp:user:${email}`);
     if (!cachedOtp) {
@@ -133,12 +125,30 @@ const verifyOtp = asyncHandler(async (req, res) => {
         throw new ApiError(400, "Invalid OTP");
     }
 
-    // OTP is valid, verify user and clean up Redis
-    user.isEmailVerified = true;
-    await user.save({ validateBeforeSave: false });
-    await redisClient.del(`otp:user:${email}`);
+    let user = await User.findOne({ email });
 
-    // Generate tokens so user is logged in immediately after verification
+    if (!user) {
+        // Check if there is pending registration data in Redis
+        const pendingUserData = await redisClient.get(`signup:data:${email}`);
+        if (!pendingUserData) {
+            throw new ApiError(400, "Registration session expired. Please register again.");
+        }
+
+        const { password, username } = JSON.parse(pendingUserData);
+
+        // Create the user in MongoDB
+        user = await User.create({
+            email: email,
+            password,
+            username,
+            isEmailVerified: true
+        });
+
+        // Clean up pending registration data
+        await redisClient.del(`signup:data:${email}`);
+    }
+
+    // Generate tokens
     const { accessToken, refreshToken } = await generateAccessAndRefereshTokens(user._id);
 
     return res.status(200)
@@ -147,6 +157,7 @@ const verifyOtp = asyncHandler(async (req, res) => {
         .json(
             new ApiResponse(200, "Email verified successfully!", {
                 user: {
+                    _id: user._id,
                     email: user.email,
                     username: user.username,
                     isEmailVerified: user.isEmailVerified
