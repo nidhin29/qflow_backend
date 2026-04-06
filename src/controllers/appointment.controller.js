@@ -50,8 +50,10 @@ const getUserAppointments = asyncHandler(async (req, res) => {
     };
 
     // Filter by Date (Upcoming vs Past)
-    const startOfToday = new Date();
-    startOfToday.setUTCHours(0, 0, 0, 0); // Normalize to 'Today' baseline
+    const now = new Date();
+    // Offset now by 5.5 hours to find the correct local calendar day (IST)
+    const indiaTime = new Date(now.getTime() + (5.5 * 60 * 60 * 1000));
+    const startOfToday = new Date(Date.UTC(indiaTime.getUTCFullYear(), indiaTime.getUTCMonth(), indiaTime.getUTCDate()));
 
     if (type === "upcoming") {
         matchCondition.appointment_date = { $gte: startOfToday };
@@ -137,10 +139,10 @@ const getUserAppointments = asyncHandler(async (req, res) => {
 
             const isToday = new Date(appointment.appointment_date).toDateString() === new Date().toDateString();
             const now = Date.now();
-            
+
             // Logic: You can't be served before your slot, but you might be served late if the queue is long.
             const baseStartTime = isToday ? Math.max(bookedTime.getTime(), now) : bookedTime.getTime();
-            
+
             const estServiceTime = new Date(baseStartTime + (patients_ahead * avgConsultTime * 60000));
 
             return {
@@ -274,10 +276,15 @@ const getHospitalAppointments = asyncHandler(async (req, res) => {
         matchCondition.department = department;
     }
 
+    const now = new Date();
+    // Offset now by 5.5 hours for IST
+    const indiaTime = new Date(now.getTime() + (5.5 * 60 * 60 * 1000));
+    const startOfToday = new Date(Date.UTC(indiaTime.getUTCFullYear(), indiaTime.getUTCMonth(), indiaTime.getUTCDate()));
+
     if (type === "upcoming") {
-        matchCondition.appointment_date = { $gte: new Date() };
+        matchCondition.appointment_date = { $gte: startOfToday };
     } else if (type === "past") {
-        matchCondition.appointment_date = { $lt: new Date() };
+        matchCondition.appointment_date = { $lt: startOfToday };
     }
 
     const sortOrder = type === "upcoming" ? 1 : -1;
@@ -348,12 +355,14 @@ const getHospitalAppointments = asyncHandler(async (req, res) => {
  */
 const serveNextPatient = asyncHandler(async (req, res) => {
     const { appointment_date, department } = req.body;
+    console.log(appointment_date, department);
     if (!appointment_date || !department) {
         throw new ApiError(400, "Date and Department are required.");
     }
 
     const hospital_id = req.user._id;
     const dateObj = new Date(appointment_date);
+    dateObj.setUTCHours(0, 0, 0, 0); // ENSURE IT MATCHES DB STORAGE
     const dateStr = dateObj.toISOString().split("T")[0];
 
     // 1. Mark next in line as "Completed" for this department

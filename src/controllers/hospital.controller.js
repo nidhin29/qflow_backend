@@ -505,7 +505,7 @@ const getHospitalDetails = asyncHandler(async (req, res) => {
 export { getHospitalDetails }
 
 const updateHospitalDetails = asyncHandler(async (req, res) => {
-    const { city, district, receptionist_name, receptionist_contact_number, available_services, average_consultation_time } = req.body;
+    const { city, district, receptionist_name, receptionist_contact_number, available_services, average_consultation_time, name } = req.body;
 
     const updateFields = {};
     if (city) updateFields.city = city;
@@ -514,6 +514,7 @@ const updateHospitalDetails = asyncHandler(async (req, res) => {
     if (receptionist_contact_number) updateFields.receptionist_contact_number = receptionist_contact_number;
     if (available_services) updateFields.available_services = available_services;
     if (average_consultation_time) updateFields.average_consultation_time = average_consultation_time;
+    if (name) updateFields.name = name;
 
     if (req.file) {
         // 1. Fetch current hospital to get old URLs for deletion
@@ -737,8 +738,4 @@ const getHospitalById = asyncHandler(async (req, res) => {
 });
 
 export { getHospitalById }
-
-
-
-
 
