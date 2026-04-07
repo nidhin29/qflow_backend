@@ -17,4 +17,5 @@ COPY . .
 EXPOSE 8000
 
 # 7. Start the application
-CMD ["npm", "run", "dev"]
+CMD ["node", "src/index.js"]
+

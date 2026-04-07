@@ -12,6 +12,7 @@ services:
       - REDIS_PASSWORD=""
     depends_on:
       - redis
+    restart: always
     develop:
       watch:
         - path: package.json
