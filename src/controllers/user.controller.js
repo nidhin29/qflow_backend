@@ -224,6 +224,8 @@ const googleLogin = asyncHandler(async (req, res) => {
             username: existingUser.username,
             city: existingUser.city,
             district: existingUser.district,
+            first_name: existingUser.first_name,
+            last_name: existingUser.last_name
         };
 
         const { accessToken, refreshToken } = await generateAccessAndRefereshTokens(existingUser._id)
@@ -330,6 +332,8 @@ const loginUser = asyncHandler(async (req, res) => {
                     username: user.username,
                     city: user.city,
                     district: user.district,
+                    first_name: user.first_name,
+                    last_name: user.last_name
                 },
                 accessToken,
                 refreshToken
@@ -392,6 +396,8 @@ const registerUserDetails = asyncHandler(async (req, res) => {
                     username: user.username,
                     city: user.city,
                     district: user.district,
+                    first_name: user.first_name,
+                    last_name: user.last_name
                 }
             })
         )
