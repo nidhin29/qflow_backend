@@ -558,9 +558,9 @@ export { logoutUser }
 const updateUserDetails = asyncHandler(async (req, res) => {
     console.log("--- Update User Profile Request ---");
     console.log("Body:", req.body);
-    
 
-    const { first_name, last_name, age, weight, height, gender, blood_group, contact_number, username } = req.body;
+
+    const { first_name, last_name, age, weight, height, gender, blood_group, contact_number, username, city, district } = req.body;
     
     if (username) {
         const existingUser = await User.findOne({ username });
@@ -580,6 +580,8 @@ const updateUserDetails = asyncHandler(async (req, res) => {
     if (blood_group) updateFields.blood_group = blood_group;
     if (contact_number) updateFields.contact_number = contact_number;
     if (username) updateFields.username = username;
+    if (city) updateFields.city = city;
+    if (district) updateFields.district = district;
 
     if (req.file) {
         // 1. Fetch current user to get old image URLs for deletion
@@ -644,7 +646,9 @@ const getUserDetails = asyncHandler(async (req, res) => {
                 blood_group: user.blood_group,
                 contact_number: user.contact_number,
                 profile_image: user.profile_image,
-                thumbnail_url: user.thumbnail_url
+                thumbnail_url: user.thumbnail_url,
+                city: user.city,
+                district: user.district,
             }
         })
     );

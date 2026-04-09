@@ -70,6 +70,12 @@ const userSchema = new Schema(
         isEmailVerified: {
             type: Boolean,
             default: false
+        },
+        city: {
+            type: String
+        },
+        district: {
+            type: String
         }
     },
     { timestamps: true }
