@@ -558,6 +558,13 @@ export { logoutUser }
 const updateUserDetails = asyncHandler(async (req, res) => {
 
     const { first_name, last_name, age, weight, height, gender, blood_group, contact_number, username } = req.body;
+    
+    if (username) {
+        const existingUser = await User.findOne({ username });
+        if (existingUser && existingUser._id.toString() !== req.user._id.toString()) {
+            throw new ApiError(400, "Username is already taken");
+        }
+    }
 
     // Build the update object dynamically (only update fields that are provided)
     const updateFields = {};

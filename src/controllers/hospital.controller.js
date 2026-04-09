@@ -505,7 +505,14 @@ const getHospitalDetails = asyncHandler(async (req, res) => {
 export { getHospitalDetails }
 
 const updateHospitalDetails = asyncHandler(async (req, res) => {
-    const { city, district, receptionist_name, receptionist_contact_number, available_services, average_consultation_time, name } = req.body;
+    const { city, district, receptionist_name, receptionist_contact_number, available_services, average_consultation_time, name, username } = req.body;
+
+    if (username) {
+        const existingHospital = await Hospital.findOne({ username });
+        if (existingHospital && existingHospital._id.toString() !== req.user._id.toString()) {
+            throw new ApiError(400, "Username is already taken");
+        }
+    }
 
     const updateFields = {};
     if (city) updateFields.city = city;
@@ -515,6 +522,7 @@ const updateHospitalDetails = asyncHandler(async (req, res) => {
     if (available_services) updateFields.available_services = available_services;
     if (average_consultation_time) updateFields.average_consultation_time = average_consultation_time;
     if (name) updateFields.name = name;
+    if (username) updateFields.username = username;
 
     if (req.file) {
         // 1. Fetch current hospital to get old URLs for deletion
