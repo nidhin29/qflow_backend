@@ -247,15 +247,29 @@ const registerHospitalDetails = asyncHandler(async (req, res) => {
     hospital.city = city;
     hospital.district = district;
 
-    if (req.file) {
-        const { imageUrl, thumbnailUrl } = await uploadImageWithThumbnailToS3(
-            req.file.buffer,
-            req.file.originalname,
-            "hospitals/logos",
-            req.file.mimetype
-        );
-        hospital.profile_image = imageUrl;
-        hospital.thumbnail_url = thumbnailUrl;
+    if (req.files) {
+        if (req.files.profile_image && req.files.profile_image[0]) {
+            const profileFile = req.files.profile_image[0];
+            const { imageUrl, thumbnailUrl } = await uploadImageWithThumbnailToS3(
+                profileFile.buffer,
+                profileFile.originalname,
+                "hospitals/logos",
+                profileFile.mimetype
+            );
+            hospital.profile_image = imageUrl;
+            hospital.thumbnail_url = thumbnailUrl;
+        }
+
+        if (req.files.receptionist_image && req.files.receptionist_image[0]) {
+            const receptionistFile = req.files.receptionist_image[0];
+            const { imageUrl } = await uploadImageWithThumbnailToS3(
+                receptionistFile.buffer,
+                receptionistFile.originalname,
+                "hospitals/receptionists",
+                receptionistFile.mimetype
+            );
+            hospital.receptionist_image = imageUrl;
+        }
     }
 
     hospital.receptionist_name = receptionist_name;
@@ -493,6 +507,7 @@ const getHospitalDetails = asyncHandler(async (req, res) => {
                 district: hospital.district,
                 receptionist_name: hospital.receptionist_name,
                 receptionist_contact_number: hospital.receptionist_contact_number,
+                receptionist_image: hospital.receptionist_image,
                 available_services: hospital.available_services,
                 average_consultation_time: hospital.average_consultation_time,
                 profile_image: hospital.profile_image,
@@ -527,25 +542,50 @@ const updateHospitalDetails = asyncHandler(async (req, res) => {
     if (name) updateFields.name = name;
     if (username) updateFields.username = username;
 
-    if (req.file) {
-        // 1. Fetch current hospital to get old URLs for deletion
-        const currentHospital = await Hospital.findById(req.user._id);
-        if (currentHospital.profile_image) {
-            await deleteFileFromS3(currentHospital.profile_image);
-        }
-        if (currentHospital.thumbnail_url) {
-            await deleteFileFromS3(currentHospital.thumbnail_url);
+    const currentHospital = await Hospital.findById(req.user._id);
+
+    if (req.files) {
+        // Handle profile_image
+        if (req.files.profile_image && req.files.profile_image[0]) {
+            const profileFile = req.files.profile_image[0];
+            
+            // Delete old profile images
+            if (currentHospital.profile_image) {
+                await deleteFileFromS3(currentHospital.profile_image);
+            }
+            if (currentHospital.thumbnail_url) {
+                await deleteFileFromS3(currentHospital.thumbnail_url);
+            }
+
+            // Upload new profile image
+            const { imageUrl, thumbnailUrl } = await uploadImageWithThumbnailToS3(
+                profileFile.buffer,
+                profileFile.originalname,
+                "hospitals/logos",
+                profileFile.mimetype
+            );
+            updateFields.profile_image = imageUrl;
+            updateFields.thumbnail_url = thumbnailUrl;
         }
 
-        // 2. Upload new images to generic folder
-        const { imageUrl, thumbnailUrl } = await uploadImageWithThumbnailToS3(
-            req.file.buffer,
-            req.file.originalname,
-            "hospitals/logos",
-            req.file.mimetype
-        );
-        updateFields.profile_image = imageUrl;
-        updateFields.thumbnail_url = thumbnailUrl;
+        // Handle receptionist_image
+        if (req.files.receptionist_image && req.files.receptionist_image[0]) {
+            const receptionistFile = req.files.receptionist_image[0];
+
+            // Delete old receptionist image
+            if (currentHospital.receptionist_image) {
+                await deleteFileFromS3(currentHospital.receptionist_image);
+            }
+
+            // Upload new receptionist image
+            const { imageUrl } = await uploadImageWithThumbnailToS3(
+                receptionistFile.buffer,
+                receptionistFile.originalname,
+                "hospitals/receptionists",
+                receptionistFile.mimetype
+            );
+            updateFields.receptionist_image = imageUrl;
+        }
     }
 
     const updatedHospital = await Hospital.findByIdAndUpdate(
