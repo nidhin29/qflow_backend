@@ -558,6 +558,7 @@ export { logoutUser }
 const updateUserDetails = asyncHandler(async (req, res) => {
     console.log("--- Update User Profile Request ---");
     console.log("Body:", req.body);
+    
 
     const { first_name, last_name, age, weight, height, gender, blood_group, contact_number, username } = req.body;
     
