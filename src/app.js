@@ -1,15 +1,18 @@
 import express from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
+import morgan from "morgan";
 
 const app = express();
 
 app.use(cors(
     {
-        origin: 'http://localhost:5173',
+        origin: process.env.CORS_ORIGIN === "*" ? "*" : process.env.CORS_ORIGIN?.split(","),
         credentials: true
     }
 ));
+
+app.use(morgan("dev")); // Add this line to see requests in real-time!
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static("public"));
