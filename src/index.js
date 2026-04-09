@@ -33,7 +33,8 @@ io.on("connection", (socket) => {
         console.log(`🛡️  DEBUG: Received [${eventName}] from ${socket.id} | Args:`, args);
     });
 
-    socket.on("join_hospital_room", (hospital_id) => {
+    // Support both 'join_hospital' (from mobile) and 'join_hospital_room' (legacy/web)
+    const handleJoinRoom = (hospital_id) => {
         if (!hospital_id) {
             console.log(`⚠️  Socket ${socket.id} tried to join a room without an ID`);
             return;
@@ -41,7 +42,10 @@ io.on("connection", (socket) => {
         const roomName = `hospital_${hospital_id}`;
         socket.join(roomName);
         console.log(`📡 Phone (${socket.id}) joined Live Room: ${roomName}`);
-    });
+    };
+
+    socket.on("join_hospital", handleJoinRoom);
+    socket.on("join_hospital_room", handleJoinRoom);
 
     socket.on("disconnect", (reason) => {
         console.log(`🔴 Live Socket Disconnected: ${socket.id} | Reason: ${reason}`);
