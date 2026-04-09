@@ -160,6 +160,68 @@ const getUserAppointments = asyncHandler(async (req, res) => {
 });
 
 /**
+ * Allows a patient to search their own appointments by Hospital Name.
+ */
+const searchUserAppointments = asyncHandler(async (req, res) => {
+    const { q, page = 1, limit = 10 } = req.query;
+
+    if (!q) {
+        throw new ApiError(400, "Search query is required");
+    }
+
+    const matchCondition = {
+        patient_id: new mongoose.Types.ObjectId(req.user._id)
+    };
+
+    const aggregateQuery = Appointment.aggregate([
+        { $match: matchCondition },
+        {
+            $lookup: {
+                from: "hospitals",
+                localField: "hospital_id",
+                foreignField: "_id",
+                as: "hospitalDetails"
+            }
+        },
+        { $unwind: { path: "$hospitalDetails", preserveNullAndEmptyArrays: true } },
+        {
+            $match: {
+                $or: [
+                    { "hospitalDetails.name": { $regex: q, $options: "i" } },
+                    { "department": { $regex: q, $options: "i" } },
+                    { "status": { $regex: q, $options: "i" } },
+                    { "patient_name": { $regex: q, $options: "i" } }
+                ]
+            }
+        },
+        { $sort: { appointment_date: -1 } },
+        {
+            $project: {
+                _id: 1,
+                appointment_date: 1,
+                appointment_time: 1,
+                token_number: 1,
+                department: 1,
+                patient_name: 1,
+                status: 1,
+                "hospitalDetails.name": 1,
+                "hospitalDetails.city": 1,
+                "hospitalDetails.district": 1,
+            }
+        }
+    ]);
+
+    const result = await Appointment.aggregatePaginate(aggregateQuery, {
+        page: parseInt(page, 10),
+        limit: parseInt(limit, 10)
+    });
+
+    return res.status(200).json(
+        new ApiResponse(200, "Appointments searched successfully", result)
+    );
+});
+
+/**
  * Books a new appointment using the "Slot-Aware Tokening" algorithm.
  * Groups patients into buckets (e.g. 1 hour) to ensure chronological daily order.
  */
@@ -400,6 +462,7 @@ const serveNextPatient = asyncHandler(async (req, res) => {
 
 export {
     getUserAppointments,
+    searchUserAppointments,
     bookAppointment,
     getHospitalAppointments,
     serveNextPatient

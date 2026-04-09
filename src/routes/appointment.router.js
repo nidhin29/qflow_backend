@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { getUserAppointments, bookAppointment, getHospitalAppointments, serveNextPatient } from "../controllers/appointment.controller.js";
+import { getUserAppointments, searchUserAppointments, bookAppointment, getHospitalAppointments, serveNextPatient } from "../controllers/appointment.controller.js";
 import { verifyJWT } from "../middlewares/auth.middleware.js";
 
 const router = Router();
@@ -10,6 +10,9 @@ router.use(verifyJWT);
 // Routes
 // Use a single route for appointments, differentiated by `?type=upcoming` or `?type=past`
 router.route("/user-appointments").get(getUserAppointments);
+
+// Search through user appointments by hospital name
+router.route("/search-user-appointments").get(searchUserAppointments);
 
 // Book a new appointment using Redis Queuing
 router.route("/book-appointment").post(bookAppointment);
