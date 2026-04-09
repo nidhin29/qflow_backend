@@ -26,23 +26,32 @@ const io = new Server(httpServer, {
 app.set("io", io);
 
 io.on("connection", (socket) => {
-    console.log("Live Socket Connected:", socket.id);
+    console.log(`🟢 Live Socket Connected: ${socket.id}`);
 
-    
-    socket.on("join_hospital_room", (hospital_id) => {
-        socket.join(`hospital_${hospital_id}`);
-        console.log(`Phone joined Live Room: hospital_${hospital_id}`);
+    // SUPER DEBUGGER: This will catch EVERY event sent by the phone
+    socket.onAny((eventName, ...args) => {
+        console.log(`🛡️  DEBUG: Received [${eventName}] from ${socket.id} | Args:`, args);
     });
 
-    socket.on("disconnect", () => {
-        console.log("Live Socket Disconnected:", socket.id);
+    socket.on("join_hospital_room", (hospital_id) => {
+        if (!hospital_id) {
+            console.log(`⚠️  Socket ${socket.id} tried to join a room without an ID`);
+            return;
+        }
+        const roomName = `hospital_${hospital_id}`;
+        socket.join(roomName);
+        console.log(`📡 Phone (${socket.id}) joined Live Room: ${roomName}`);
+    });
+
+    socket.on("disconnect", (reason) => {
+        console.log(`🔴 Live Socket Disconnected: ${socket.id} | Reason: ${reason}`);
     });
 });
 
 
 Promise.all([connectDB(), connectRedis()])
     .then(() => {
-        
+
         // IMPORTANT: Use httpServer.listen instead of app.listen!
         httpServer.listen(process.env.PORT || 8000, () => {
             console.log(`Server is running on port ${process.env.PORT}`);

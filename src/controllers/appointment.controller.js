@@ -447,7 +447,9 @@ const serveNextPatient = asyncHandler(async (req, res) => {
     // 3. Real-time broadcast
     const io = req.app.get("io");
     if (io) {
-        io.to(`hospital_${hospital_id}`).emit("queueUpdate", {
+        const roomName = `hospital_${hospital_id}`;
+        console.log(`📣 Broadcasting patient update to room: ${roomName} | Token: ${currentToken}`);
+        io.to(roomName).emit("queueUpdate", {
             appointment_date: dateStr,
             department: department,
             currently_serving: currentToken
