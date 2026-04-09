@@ -557,7 +557,7 @@ export { logoutUser }
 
 const updateUserDetails = asyncHandler(async (req, res) => {
 
-    const { first_name, last_name, age, weight, height, gender, blood_group, contact_number } = req.body;
+    const { first_name, last_name, age, weight, height, gender, blood_group, contact_number, username } = req.body;
 
     // Build the update object dynamically (only update fields that are provided)
     const updateFields = {};
@@ -569,6 +569,7 @@ const updateUserDetails = asyncHandler(async (req, res) => {
     if (gender) updateFields.gender = gender;
     if (blood_group) updateFields.blood_group = blood_group;
     if (contact_number) updateFields.contact_number = contact_number;
+    if (username) updateFields.username = username;
 
     if (req.file) {
         // 1. Fetch current user to get old image URLs for deletion
