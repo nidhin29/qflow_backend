@@ -505,6 +505,9 @@ const getHospitalDetails = asyncHandler(async (req, res) => {
 export { getHospitalDetails }
 
 const updateHospitalDetails = asyncHandler(async (req, res) => {
+    console.log("--- Update Hospital Profile Request ---");
+    console.log("Body:", req.body);
+
     const { city, district, receptionist_name, receptionist_contact_number, available_services, average_consultation_time, name, username } = req.body;
 
     if (username) {
