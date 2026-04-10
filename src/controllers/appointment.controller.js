@@ -110,10 +110,23 @@ const getUserAppointments = asyncHandler(async (req, res) => {
                 token_number: { $lt: appointment.token_number }
             });
 
+            // 3. Smart Wait Logic: (Now/Slot + Wait Time)
+            const avgConsultTime = appointment.hospitalDetails?.average_consultation_time || 15;
+            const bookedTime = getApptDateObject(appointment.appointment_date, appointment.appointment_time);
+
+            const isToday = new Date(appointment.appointment_date).toDateString() === new Date().toDateString();
+            const nowTime = Date.now();
+
+            // Logic: You can't be served before your slot, but you might be served late if the queue is long.
+            const baseStartTime = isToday ? Math.max(bookedTime.getTime(), nowTime) : bookedTime.getTime();
+
+            const estServiceTime = new Date(baseStartTime + (patients_ahead * avgConsultTime * 60000));
+
             return {
                 ...appointment,
                 currently_serving: servedNumber,
-                patients_ahead
+                patients_ahead,
+                estimated_service_time: estServiceTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
             };
         }));
     }
