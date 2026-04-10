@@ -3,6 +3,8 @@ import { ApiError } from "../utils/ApiError.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import { Appointment } from "../models/appointment.model.js";
 import { Hospital } from "../models/hospital.model.js";
+import { Notification } from "../models/notification.model.js";
+import { adminMessaging } from "../config/firebase.js";
 import mongoose from "mongoose";
 import { redisClient } from "../db/redis.js";
 
@@ -456,10 +458,41 @@ const serveNextPatient = asyncHandler(async (req, res) => {
         });
     }
 
-    return res.status(200).json(new ApiResponse(200, `Next patient in ${department} called`, {
-        department,
+    return res.status(200).json(new ApiResponse(200, "Patient served successfully", {
         currently_serving: currentToken
     }));
+});
+
+/**
+ * MANUAL TESTER: Sends a push notification to the logged-in user immediately.
+ */
+const testNotification = asyncHandler(async (req, res) => {
+    const user = req.user;
+    
+    if (!user.fcmToken) {
+        throw new ApiError(400, "FCM Token not found for this user. Please sync your token from the mobile app first.");
+    }
+
+    const title = "Test Notification";
+    const body = "Success! Your Qflow notification system is working perfectly. 🎉";
+
+    if (adminMessaging) {
+        await adminMessaging.send({
+            notification: { title, body },
+            token: user.fcmToken,
+        });
+    }
+
+    // Save to history as well
+    await Notification.create({
+        user_id: user._id,
+        text: body,
+        date: new Date()
+    });
+
+    return res.status(200).json(
+        new ApiResponse(200, "Test notification sent successfully!")
+    );
 });
 
 export {
@@ -467,7 +500,6 @@ export {
     searchUserAppointments,
     bookAppointment,
     getHospitalAppointments,
-    serveNextPatient
+    serveNextPatient,
+    testNotification
 };
-
-
