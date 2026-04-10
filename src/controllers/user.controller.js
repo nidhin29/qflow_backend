@@ -355,10 +355,10 @@ export { loginUser }
 const registerUserDetails = asyncHandler(async (req, res) => {
     const user = req.user;
 
-    const { username, first_name, last_name, age, weight, height, gender, blood_group, contact_number } = req.body;
+    const { username, first_name, last_name, age, weight, height, gender, blood_group, contact_number, city, district } = req.body;
 
 
-    if (!username || !first_name || !last_name || !age || !weight || !height || !gender || !blood_group || !contact_number) {
+    if (!username || !first_name || !last_name || !age || !weight || !height || !gender || !blood_group || !contact_number || !city || !district) {
         throw new ApiError(400, "All fields are required");
     }
 
@@ -381,6 +381,8 @@ const registerUserDetails = asyncHandler(async (req, res) => {
     user.gender = gender;
     user.blood_group = blood_group;
     user.contact_number = contact_number;
+    user.city = city;
+    user.district = district;
 
     if (req.file) {
         const { imageUrl, thumbnailUrl } = await uploadImageWithThumbnailToS3(
@@ -651,6 +653,9 @@ const getUserDetails = asyncHandler(async (req, res) => {
     if (!user) {
         throw new ApiError(404, "User not found");
     }
+
+    console.log(user.city);
+    console.log(user.district);
 
     return res.status(200).json(
         new ApiResponse(200, "User details fetched successfully", {
