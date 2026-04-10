@@ -252,7 +252,7 @@ const googleLogin = asyncHandler(async (req, res) => {
             password: Math.random().toString(36).slice(-10)
         })
 
-        const createdUser = await User.findById(user._id).select("email username _id");
+        const createdUser = await User.findById(user._id).select("email username _id first_name last_name city district");
 
         const { accessToken, refreshToken } = await generateAccessAndRefereshTokens(user._id)
 
@@ -267,7 +267,15 @@ const googleLogin = asyncHandler(async (req, res) => {
             .cookie("refreshToken", refreshToken, options)
             .json(
                 new ApiResponse(201, "User registered successfully", {
-                    user: createdUser,
+                    user: {
+                        id: createdUser._id,
+                        email: createdUser.email,
+                        username: createdUser.username,
+                        first_name: createdUser.first_name,
+                        last_name: createdUser.last_name,
+                        city: createdUser.city,
+                        district: createdUser.district,
+                    },
                     accessToken,
                     refreshToken
                 })
@@ -311,7 +319,7 @@ const loginUser = asyncHandler(async (req, res) => {
             .json(
                 new ApiResponse(201, "User logged in successfully but profile is incomplete", {
                     user: {
-                        _id: user._id,
+                        id: user._id,
                         email: user.email,
                         username: user.username,
                     },
@@ -327,7 +335,7 @@ const loginUser = asyncHandler(async (req, res) => {
         .json(
             new ApiResponse(200, "User logged in successfully", {
                 user: {
-                    _id: user._id,
+                    id: user._id,
                     email: user.email,
                     username: user.username,
                     city: user.city,
@@ -391,7 +399,7 @@ const registerUserDetails = asyncHandler(async (req, res) => {
         .json(
             new ApiResponse(200, "User details registered successfully", {
                 user: {
-                    _id: user._id,
+                    id: user._id,
                     email: user.email,
                     username: user.username,
                     city: user.city,
