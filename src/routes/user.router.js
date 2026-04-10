@@ -11,7 +11,8 @@ import {
     resetPassword,
     logoutUser,
     updateUserDetails,
-    getUserDetails
+    getUserDetails,
+    updateFcmToken
 } from "../controllers/user.controller.js"
 import { verifyJWT } from "../middlewares/auth.middleware.js"
 import { upload } from "../middlewares/multer.middleware.js"
@@ -30,5 +31,6 @@ router.route("/reset-password").post(resetPassword);
 router.route("/logout").post(verifyJWT, logoutUser);
 router.route("/update-user-details").put(verifyJWT, upload.single("profile_image"), updateUserDetails);
 router.route("/get-user-details").get(verifyJWT, getUserDetails);
+router.route("/update-fcm-token").patch(verifyJWT, updateFcmToken);
 
 export default router;

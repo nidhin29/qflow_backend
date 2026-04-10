@@ -36,6 +36,10 @@ const appointmentSchema = new Schema(
             type: String,
             enum: ["Pending", "Completed", "Cancelled"],
             default: "Pending"
+        },
+        reminder_sent: {
+            type: Boolean,
+            default: false
         }
     },
     { timestamps: true }

@@ -76,6 +76,9 @@ const userSchema = new Schema(
         },
         district: {
             type: String
+        },
+        fcmToken: {
+            type: String
         }
     },
     { timestamps: true }

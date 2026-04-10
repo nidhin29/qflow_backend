@@ -123,3 +123,8 @@ dist
 
 #collection
 Qflow Healthcare MASTER API Collection.postman_collection.json
+
+# Firebase Service Account
+firebase-service-account.json
+src/config/*.json
+qflow-353dd-firebase-adminsdk-fbsvc-1e521968d1.json

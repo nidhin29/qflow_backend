@@ -226,9 +226,9 @@ const searchUserAppointments = asyncHandler(async (req, res) => {
  * Groups patients into buckets (e.g. 1 hour) to ensure chronological daily order.
  */
 const bookAppointment = asyncHandler(async (req, res) => {
-    const { hospital_id, appointment_date, appointment_time, department, patient_name } = req.body;
+    const { hospital_id, appointment_date, appointment_time, department, patient_name, patient_id } = req.body;
 
-    if (!hospital_id || !appointment_date || !appointment_time || !department || !patient_name) {
+    if (!hospital_id || !appointment_date || !appointment_time || !department || !patient_name || !patient_id) {
         throw new ApiError(400, "All fields are required.");
     }
 

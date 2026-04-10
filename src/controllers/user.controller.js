@@ -225,7 +225,7 @@ const googleLogin = asyncHandler(async (req, res) => {
             city: existingUser.city,
             district: existingUser.district,
             first_name: existingUser.first_name,
-            last_name: existingUser.last_name
+            last_name: existingUser.last_name,
         };
 
         const { accessToken, refreshToken } = await generateAccessAndRefereshTokens(existingUser._id)
@@ -666,4 +666,26 @@ const getUserDetails = asyncHandler(async (req, res) => {
     );
 });
 
-export { getUserDetails }
+const updateFcmToken = asyncHandler(async (req, res) => {
+    const { fcmToken } = req.body;
+
+    if (!fcmToken) {
+        throw new ApiError(400, "FCM Token is required");
+    }
+
+    await User.findByIdAndUpdate(
+        req.user?._id,
+        {
+            $set: {
+                fcmToken
+            }
+        },
+        { new: true }
+    );
+
+    return res.status(200).json(
+        new ApiResponse(200, "FCM Token updated successfully")
+    );
+});
+
+export { getUserDetails, updateFcmToken }

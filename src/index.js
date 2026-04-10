@@ -6,6 +6,7 @@ import { app } from "./app.js"
 import { connectRedis } from "./db/redis.js";
 import { createServer } from "http";
 import { Server } from "socket.io";
+import { initReminderCron } from "./cron/reminder.cron.js";
 dotenv.config(
     {
         path: "./.env"
@@ -55,7 +56,9 @@ io.on("connection", (socket) => {
 
 Promise.all([connectDB(), connectRedis()])
     .then(() => {
-
+        // Start Background Cron Services
+        initReminderCron();
+        
         // IMPORTANT: Use httpServer.listen instead of app.listen!
         httpServer.listen(process.env.PORT || 8000, () => {
             console.log(`Server is running on port ${process.env.PORT}`);
