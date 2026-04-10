@@ -290,7 +290,7 @@ const bookAppointment = asyncHandler(async (req, res) => {
     while (maxRetries-- > 0) {
         try {
             appointment = await Appointment.create({
-                patient_id: req.user._id,
+                patient_id: patient_id,
                 hospital_id,
                 appointment_date: dateObj,
                 appointment_time,
