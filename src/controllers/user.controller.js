@@ -647,6 +647,7 @@ const getUserDetails = asyncHandler(async (req, res) => {
     return res.status(200).json(
         new ApiResponse(200, "User details fetched successfully", {
             user: {
+                id: user._id,
                 email: user.email,
                 username: user.username,
                 first_name: user.first_name,
@@ -681,7 +682,7 @@ const updateFcmToken = asyncHandler(async (req, res) => {
             }
         },
         { new: true }
-        
+
     );
 
     return res.status(200).json(
