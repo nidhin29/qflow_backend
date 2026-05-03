@@ -7,6 +7,8 @@ import { connectRedis } from "./db/redis.js";
 import { createServer } from "http";
 import { Server } from "socket.io";
 import { initReminderCron } from "./cron/reminder.cron.js";
+import { connectRabbitMQ } from "./config/rabbitmq.js";
+import { setupWorkers } from "./workers/notification.worker.js";
 dotenv.config(
     {
         path: "./.env"
@@ -54,8 +56,11 @@ io.on("connection", (socket) => {
 });
 
 
-Promise.all([connectDB(), connectRedis()])
+Promise.all([connectDB(), connectRedis(), connectRabbitMQ()])
     .then(() => {
+        // Start Background Workers
+        setupWorkers();
+
         // Start Background Cron Services
         initReminderCron();
         

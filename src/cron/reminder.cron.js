@@ -4,6 +4,8 @@ import { User } from "../models/user.model.js";
 import { adminMessaging } from "../config/firebase.js";
 import { Notification } from "../models/notification.model.js";
 
+import { publishToQueue } from "../config/rabbitmq.js";
+
 const sendAutomatedReminders = async () => {
     try {
         console.log("⏰ Running Daily Appointment Reminder Task...");
@@ -29,44 +31,29 @@ const sendAutomatedReminders = async () => {
             return;
         }
 
-        console.log(`📧 Found ${appointments.length} appointments for tomorrow. Checking for FCM tokens...`);
+        console.log(`📧 Found ${appointments.length} appointments for tomorrow. Pushing to RabbitMQ...`);
 
         for (const appt of appointments) {
             const user = await User.findById(appt.patient_id);
             const hospitalName = appt.hospital_id?.name || "the hospital";
             const notificationText = `Hey, you have an appointment at ${hospitalName} tomorrow. Don't forget!`;
             
-            if (user && user.fcmToken && adminMessaging) {
-                const message = {
-                    notification: {
-                        title: "Appointment Reminder",
-                        body: notificationText
-                    },
-                    token: user.fcmToken,
-                };
+            if (user && user.fcmToken) {
+                // Push to RabbitMQ instead of sending directly
+                await publishToQueue('notification_queue', {
+                    userId: user._id,
+                    fcmToken: user.fcmToken,
+                    title: "Appointment Reminder",
+                    body: notificationText,
+                    extraData: { type: "reminder", appointmentId: appt._id.toString() }
+                });
 
-                try {
-                    await adminMessaging.send(message);
-                    console.log(`✅ FCM Reminder sent to ${user.email} (Token: ${user.fcmToken.substring(0, 10)}...)`);
-                    
-                    // Mark as sent in Appointment
-                    appt.reminder_sent = true;
-                    await appt.save();
-
-                    // Save to Notification History
-                    await Notification.create({
-                        user_id: user._id,
-                        text: notificationText,
-                        date: new Date() // Store the actual time sent
-                    });
-
-                } catch (fcmError) {
-                    console.error(`❌ Failed to send FCM to ${user.email}:`, fcmError.message);
-                }
-            } else if (!user?.fcmToken) {
-                 // console.log(`⏩ Skipping ${user?.email} - No FCM Token found.`);
+                // Mark as sent in Appointment DB so we don't requeue it on cron restart
+                appt.reminder_sent = true;
+                await appt.save();
             }
         }
+        console.log(`✅ Finished pushing ${appointments.length} reminder tasks to queue.`);
 
     } catch (error) {
         console.error("❌ CRITICAL: Error in Automated Reminder Task:", error);

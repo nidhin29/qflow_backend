@@ -7,6 +7,8 @@ import { Notification } from "../models/notification.model.js";
 import { adminMessaging } from "../config/firebase.js";
 import mongoose from "mongoose";
 import { redisClient } from "../db/redis.js";
+import { User } from "../models/user.model.js";
+import { publishToQueue } from "../config/rabbitmq.js";
 
 /**
  * UTILITY HELPERS
@@ -225,6 +227,18 @@ const bookAppointment = asyncHandler(async (req, res) => {
         patient_name
     });
 
+    // Send Appointment Confirmation via RabbitMQ
+    const user = await User.findById(patient_id);
+    if (user && user.fcmToken) {
+        await publishToQueue('notification_queue', {
+            userId: user._id,
+            fcmToken: user.fcmToken,
+            title: "Appointment Confirmed! 🎉",
+            body: `Your appointment at ${hospital.name} for ${department} has been booked. Token: ${token_number}`,
+            extraData: { type: "booking_confirmation", appointmentId: appointment._id.toString() }
+        });
+    }
+
     return res.status(201).json(new ApiResponse(201, "Appointment booked", appointment));
 });
 
@@ -317,23 +331,17 @@ const testNotification = asyncHandler(async (req, res) => {
     if (!user.fcmToken) throw new ApiError(400, "No FCM Token found. Sync from app first.");
 
     const title = "Test Notification";
-    const body = "Success! Your Qflow notification system is working perfectly. 🎉";
+    const body = "Success! Your Qflow notification system is working perfectly (via RabbitMQ). 🎉";
 
-    if (adminMessaging) {
-        try {
-            const response = await adminMessaging.send({
-                notification: { title, body },
-                data: { click_action: "FLUTTER_NOTIFICATION_CLICK", type: "test" },
-                token: user.fcmToken,
-            });
-            console.log("✅ FCM Success! ID:", response);
-        } catch (error) {
-            console.error("❌ FCM Error:", error);
-        }
-    }
+    await publishToQueue('notification_queue', {
+        userId: user._id,
+        fcmToken: user.fcmToken,
+        title,
+        body,
+        extraData: { type: "test" }
+    });
 
-    await Notification.create({ user_id: user._id, text: body, date: new Date() });
-    return res.status(200).json(new ApiResponse(200, "Test notification sent!"));
+    return res.status(200).json(new ApiResponse(200, "Test notification pushed to queue!"));
 });
 
 export {
